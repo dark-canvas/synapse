@@ -1,6 +1,11 @@
 #![no_main]
 #![no_std]
 
+#[cfg(test)]
+extern crate std;
+
+mod pager;
+
 use core::arch::asm;
 use core::panic::PanicInfo;
 
@@ -8,6 +13,11 @@ use core::panic::PanicInfo;
 
 extern crate satus_struct;
 use satus_struct::config::Config;
+use satus_struct::module_list::ModuleList;
+
+use pager::Pager;
+
+const KERNEL_START: u64 = 0xFFFFFF8000000000;
 
 #[cfg(not(test))]
 #[panic_handler]
@@ -25,6 +35,17 @@ pub extern "C" fn _start() -> ! {
         );
     }
     let config = Config::from_page(config_addr);
+    let module_list = ModuleList::from_page(config.get_module_list_address());
+
+    let mut pager = Pager::new();
+
+    let kernel_info = module_list.get_module_info(0).expect("No kernel module found");
+    let kernel_start = kernel_info.get_start_address();
+    let kernel_size = kernel_info.get_size();
+    //pager.map_pages(KERNEL_START, kernel_info.page_count as usize); // TODO: permissions
+    //core::ptr::copy_nonoverlapping(kernel_start as *const u8, KERNEL_START as *mut u8, kernel_size);
+
+
     let framebuffer = config.get_framebuffer_address() as *mut u8;
     for i in 0..(config.get_framebuffer_size() as usize) {
         unsafe {
@@ -33,17 +54,3 @@ pub extern "C" fn _start() -> ! {
     }
     loop {}
 }
-
-/*
-#[entry]
-fn main() -> () {
-    /*
-    asm!(
-        "mov {var}, rax",
-        var = out(reg) _,
-    );
-    let config = var;
-    */
-    loop {}
-}
-*/
