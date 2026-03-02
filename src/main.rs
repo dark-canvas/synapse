@@ -1,10 +1,11 @@
-#![no_main]
 #![no_std]
+#![cfg_attr(not(test), no_main)]
 
 #[cfg(test)]
 extern crate std;
 
 mod pager;
+mod stack;
 
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -25,6 +26,7 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
+#[cfg(not(test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     let config_addr: usize;
