@@ -1,24 +1,134 @@
-pub struct Stack<'a> {
+//! A generic stack implementation
+//!
+//! While rust already provides Vec<T> as a stack-like data structure, it relies on 
+//! heap allocation, and this code exists a layer below that.
+//!
+//! The diagram below depicts how the different stack types grow in memory.
+//! Effectively, the direction ("up" or "down") refers to the math 
+//! ("increment" or "decrement") used to calculate the next address when 
+//! pushing a new value onto the stack.
+//!
+//! ```
+//!     Memory      Expand Up   Expand Down
+//!  ============ ============ =============
+//!   0x00000040       limit      1 <- base
+//!   0x00000038                  2
+//!   0x00000030                  3
+//!   0x00000028                  4 <- top
+//!   0x00000020
+//!   0x00000018      4 <- top
+//!   0x00000010      3
+//!   0x00000008      2
+//!   0x00000000      1 <- base    limit
+//!  ```
+//!
+//! Note that the stack type is declared as a const generic parameter, which means that 
+//! many of the brances and conditional can be optimized or compiled out entirely.
+
+use crate::types::Address;
+
+pub const ExpandUp: bool = true;
+pub const ExpandDown: bool = false;
+
+pub struct Stack<'a, T, const STACK_TYPE: bool> where T: Clone + Copy {
     size: usize,
-    base: &'a mut[usize],
+    base: &'a mut[T],
     pointer: usize,
 }
 
-impl<'a> Stack<'a> {
-    pub fn new(base: usize, size: usize) -> Stack<'static> {
-        Stack { base: unsafe { core::slice::from_raw_parts_mut(base as *mut usize, size) }, size, pointer: 0 }
+impl<'a, T: Clone + Copy, const STACK_TYPE: bool> Stack<'a, T, STACK_TYPE> {
+    pub fn new(base: usize, size: usize) -> Stack<'static, T, STACK_TYPE> {
+        Stack { 
+            base: unsafe { core::slice::from_raw_parts_mut(base as *mut T, size) }, 
+            size, 
+            pointer: match(STACK_TYPE) {
+                ExpandUp => 0,
+                ExpandDown => size,
+            }
+        }
     }
 
-    pub fn top(&self) -> usize {
-        self.base.as_ptr() as usize + (self.size * core::mem::size_of::<usize>())
+    fn direction(&self) -> isize {
+        match(STACK_TYPE) {
+            ExpandUp => 1,
+            ExpandDown => -1,
+        }
     }
 
-    pub fn push(&mut self, value: usize) {
-        if self.pointer >= self.size {
+    pub fn base(&self) -> Address {
+        (
+            match(STACK_TYPE) {
+                ExpandUp => self.base.as_ptr() as usize,
+                ExpandDown => self.base.as_ptr() as usize + (self.size * core::mem::size_of::<T>()),
+            }
+        ) as Address
+    }
+
+    pub fn top(&self) -> Address {
+        (
+           match(STACK_TYPE) {
+                ExpandUp => self.base() as usize + (self.len() * core::mem::size_of::<T>()),
+                ExpandDown => self.base() as usize - (self.len() * core::mem::size_of::<T>()),
+            }
+        ) as Address
+    }
+
+    pub fn limit(&self) -> Address {
+        self.base() + (self.direction() * (self.size * core::mem::size_of::<T>()) as isize) as Address
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match STACK_TYPE {
+            ExpandUp => self.pointer == 0,
+            ExpandDown => self.pointer == self.size,
+        }
+    }
+
+    pub fn is_full(&self) -> bool {
+        match STACK_TYPE {
+            ExpandUp => self.pointer >= self.size,
+            ExpandDown => self.pointer == 0,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match STACK_TYPE {
+            ExpandUp => self.pointer,
+            ExpandDown => self.size - self.pointer,
+        }
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.size
+    }
+
+    pub fn available(&self) -> usize {
+        self.capacity() - self.len()
+    }
+
+    pub fn push(&mut self, value: T) {
+        if self.is_full() {
             panic!("Stack overflow");
         }
-        self.base[self.pointer] = value;
-        self.pointer += 1;
+        
+        match STACK_TYPE {
+            ExpandUp => {
+                self.base[self.pointer] = value;
+                self.pointer += 1;
+            },
+            ExpandDown => {
+                self.pointer -= 1;
+                self.base[self.pointer] = value;
+            }
+        }
+    }
+
+    pub fn pop(&mut self) -> Option<T> {
+        if self.is_empty() {
+            return None;
+        }
+        self.pointer -= self.direction() as usize;
+        Some(self.base[self.pointer])
     }
 }
 
@@ -28,18 +138,45 @@ mod tests {
 
     #[test]
     fn test_create_stack() {
-        let stack = Stack::new(0x1000, 10);
+        let stack = Stack::<usize, ExpandUp>::new(0x1000, 10);
 
         assert_eq!(stack.size, 10);
-        assert_eq!(stack.base.as_ptr() as usize, 0x1000);
-        assert_eq!(stack.top(), 0x1000 + 10 * core::mem::size_of::<usize>());
+        assert_eq!(stack.len(), 0);
+        assert_eq!(stack.capacity(), 10);
+        assert_eq!(stack.available(), 10);
+        assert_eq!(stack.base(), 0x1000 as Address);
+        assert_eq!(stack.top(), 0x1000 as Address);
+        assert_eq!(stack.limit() as usize, 0x1000 + 10 * core::mem::size_of::<usize>());
     }
 
     #[test]
-    fn test_push_stack() {
-        let stack_data = [0; 10];
-        let mut stack = Stack::new(stack_data.as_ptr() as usize, 10);
+    fn test_expand_up_push() {
+        let stack_data = [0usize; 10];
+        let mut stack = Stack::<usize, ExpandUp>::new(stack_data.as_ptr() as usize, 10);
         stack.push(0x12345678);
+        stack.push(0x9abcdef0);
         assert_eq!(stack.base[0], 0x12345678);
+        assert_eq!(stack.base[1], 0x9abcdef0);
+        assert_eq!(stack.size, 10);
+        assert_eq!(stack.len(), 2);
+        assert_eq!(stack.capacity(), 10);
+        assert_eq!(stack.available(), 8);
+        assert_eq!(stack.base(), stack_data.as_ptr() as Address);
+        assert_eq!(stack.top(), (stack_data.as_ptr() as usize + 2 * core::mem::size_of::<usize>()) as Address);
+    }
+
+    #[test]
+    fn test_expand_down_push() {
+        let stack_data = [0usize; 10];
+        let mut stack = Stack::<usize, ExpandDown>::new(stack_data.as_ptr() as usize, 10);
+        stack.push(0x12345678);
+        stack.push(0x9abcdef0);
+        assert_eq!(stack.base[9], 0x12345678);
+        assert_eq!(stack.size, 10);
+        assert_eq!(stack.len(), 2);
+        assert_eq!(stack.capacity(), 10);
+        assert_eq!(stack.available(), 8);
+        assert_eq!(stack.base(), (stack_data.as_ptr() as usize + 10 * core::mem::size_of::<usize>()) as Address);
+        assert_eq!(stack.top(), (stack_data.as_ptr() as usize + 8 * core::mem::size_of::<usize>()) as Address);
     }
 }
