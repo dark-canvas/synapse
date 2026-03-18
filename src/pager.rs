@@ -4,6 +4,12 @@ use x86_64::structures::paging::PageTable;
 use x86_64::structures::paging::page_table::PageTableEntry;
 use x86_64::PhysAddr;
 
+use satus_struct::config::Config;
+use satus_struct::module_list::ModuleList;
+
+use crate::types::Address;
+use crate::stack::{Stack, ExpandUp, ExpandDown};
+
 //use log::info;
 
 pub const PAGE_SIZE: usize = 4096;
@@ -20,20 +26,85 @@ pub enum PageType {
 
 pub struct Pager {
     pml4_table: &'static mut PageTable,
+    //page_stack_4kb: Stack<'static, usize>,
+}
+
+    
+fn page_in_use(page: usize, page_size: usize, module_list: &ModuleList) -> bool {
+    let page_start = page * page_size;
+    let page_end = page_start + page_size;
+
+    // TODO: get_module_count() instead?
+    // Or add an iterator?
+    for i in 0..module_list.get_num_modules() {
+        let module_info = module_list.get_module_info(i).expect("Invalid module index");
+        let module_start = module_info.get_start_address() as usize;
+        let module_end = module_start + module_info.get_size() as usize;
+
+        if (page_start >= module_start && page_start < module_end) || 
+           (page_end > module_start && page_end <= module_end) {
+            return true;
+        }
+    }
+
+    false
 }
 
 impl Pager {
-    pub fn new() -> Pager {
+    pub fn new(config: &Config) -> Pager {
         let (pml4_frame, _flags) = Cr3::read();
         let pml4_addr: PhysAddr = pml4_frame.start_address();
 
+        let module_list = ModuleList::from_page(config.get_module_list_address());
+
+        // TOOD: need to build 2mb page stack, and 1gb page stack... ideally in a way that 
+        // shared code
+        // TOOD: query from bootloader struct
+        let num_pages = 524196;
+        // How many pages do we need to allocate in order to construct the page table 
+        // itself
+        let page_stack_bytes = num_pages * core::mem::size_of::<usize>();
+        let page_stack_pages = (page_stack_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+
+        // TODO: actually decide on a location for this stack...
+        // default to 2mb for now... should be available...
+        let mut page_stack_4kb = Stack::<usize, ExpandUp>::new(0x200000, page_stack_pages);
+        for page in 0..num_pages {
+            if ! page_in_use(page, 4096, &module_list) {
+                // kernel hangs if this occurs...
+                //page_stack_4kb.push(page);
+            }
+        }
+
         //info!("PML4 Physical Address: {:?}", pml4_addr);
+
+        // TODO: detrermine number of 4kb pages (audit mapped pages or get it from bootloader?)
+        // TODO: create page stacks for 4kb, 2mb and 1gb pages
 
         unsafe {
             let pml4_table = &mut *(pml4_frame.start_address().as_u64() as *mut PageTable);
+            //Pager { pml4_table, page_stack_4kb }
             Pager { pml4_table }
         }
     }
+
+    /*
+    pub fn alloc_page(&mut self, page_type: PageType) -> Option<usize> {
+        match page_type {
+            PageType::Page4K => self.page_stack_4kb.pop(),
+            PageType::Page2M => None, // TODO: implement
+            PageType::Page1G => None, // TODO: implement
+        }
+    }
+
+    pub fn free_page(&mut self, page_type: PageType, page_number: usize) {
+        match page_type {
+            PageType::Page4K => self.page_stack_4kb.push(page_number),
+            PageType::Page2M => (), // TODO: implement
+            PageType::Page1G => (), // TODO: implement
+        }
+    }
+        */
 
     pub fn virtual_to_physical(&self, virtual_addr: usize) -> Option<usize> {
         let pml4_index = (virtual_addr >> 39) & 0o777;
