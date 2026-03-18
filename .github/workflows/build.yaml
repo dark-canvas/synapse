@@ -1,0 +1,29 @@
+name: Build the kernel
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: [actions/checkout@v4](https://github.com/actions/checkout)
+      
+    - name: Setup Rust toolchain
+      uses: [dtolnay/rust-toolchain@stable](https://github.com/dtolnay/rust-toolchain)
+      with:
+        toolchain: nightly
+
+    - name: Build
+      run: make
+
+    - name: Run tests
+      run: make test
