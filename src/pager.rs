@@ -8,10 +8,11 @@ use satus_struct::config::Config;
 use satus_struct::module_list::ModuleList;
 
 use crate::types::Address;
-use crate::stack::{Stack, ExpandUp, ExpandDown};
+use crate::stack::{Stack, EXPAND_UP, EXPAND_DOWN};
 
 //use log::info;
 
+// TODO: remove this an everything that uses it and use 3 PageStack's
 pub const PAGE_SIZE: usize = 4096;
 
 pub struct PageStack {
@@ -68,7 +69,7 @@ impl Pager {
 
         // TODO: actually decide on a location for this stack...
         // default to 2mb for now... should be available...
-        let mut page_stack_4kb = Stack::<usize, ExpandUp>::new(0x200000, page_stack_pages);
+        let mut page_stack_4kb = Stack::<usize, EXPAND_UP>::new(0x200000, page_stack_pages);
         for page in 0..num_pages {
             if ! page_in_use(page, 4096, &module_list) {
                 // kernel hangs if this occurs...
