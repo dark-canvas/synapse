@@ -1,5 +1,9 @@
 //! Page Stack
 //!
+//! A structure for managing allocation/freeing of varoius different page sizes.
+//!
+//! == Overview ==
+//!
 //! Implements a page management structure for each of the different page sizes, whereby 
 //! smaller page sizes can borrow a page from a larger allocater if/when it runs out.
 //!
@@ -54,40 +58,51 @@
 //! remain unmapped, and only mapped into place when required (although the pages can 
 //! be intelligently mapped, rather than requiring the overhead of a page fault)
 
-use crate::stack::{Stack, ExpandUp, ExpandDown};
+use mockall::*;
+use mockall::predicate::*;
+
+use crate::stack::{Stack, EXPAND_UP, EXPAND_DOWN};
 use crate::types::Address;
 
+// These traits must use interior mutability to accomplish their goals, as the 
+// interfaces are intentionally non-mut
+
+#[automock]
 pub trait PageBorrower {
-    fn borrow_pages(&mut self) -> Option< (Address, usize) >;
+    fn borrow_pages(&self) -> Option< (Address, usize) >;
 }
 
 // TODO: this will be implemented by the pager, but will need some form of protection in order to 
 // ensure it can be shared... need to implement some form of mutex
+#[automock]
 pub trait PageMapper {
-    fn map_page(&mut self, page_addr: Address) -> bool;
-    fn unmap_page(&mut self, page_addr: Address) -> bool;
+    //fn map_page(&mut self, page_addr: Address) -> bool;
+    //fn unmap_page(&mut self, page_addr: Address) -> bool;
 
     // or something like?
     // Ok(b) -> address is mapped, b == true means the page was mapped, otherwise it was already mapped
     // Err -> couldn't map the page..
-    fn ensure_mapped(&mut self, page_addr: Address) -> Result<bool,()>;
+    fn ensure_mapped(&self, page_addr: Address) -> Result<bool,()>;
 }
 
-pub struct PageStack< BORROWER: PageBorrower, MAPPER: PageMapper > {
-    allocated_pages: Stack<'static, usize, ExpandDown>,
-    available_pages: Stack<'static, usize, ExpandUp>,
-    borrower: BORROWER,
-    mapper: MAPPER,
+pub struct PageStack<'a, BORROWER: PageBorrower, MAPPER: PageMapper, const PAGE_SIZE: usize > {
+    allocated_pages: Stack<'static, Address, EXPAND_DOWN>,
+    available_pages: Stack<'static, Address, EXPAND_UP>,
+    borrower: &'a BORROWER,
+    mapper: &'a MAPPER,
 }
 
-impl<BORROWER: PageBorroer, MAPPER: PageMapper> PackStack<BORROWER, MAPPER> {
-    pub fn new(borrower: BORROWER, mapper: MAPPER) -> PageStack<BORROWER, MAPPER> {
+impl<'a, BORROWER: PageBorrower, MAPPER: PageMapper, const PAGE_SIZE: usize> PageStack<'a, BORROWER, MAPPER, PAGE_SIZE> {
+    pub fn new(borrower: &'a BORROWER, mapper: &'a MAPPER, stack_base: Address, page_count: usize) -> PageStack<'a, BORROWER, MAPPER, PAGE_SIZE> {
         // TODO determine where to place these stacks...
         // Allocate pages for the top and bottom of the stack, but leave the middle unmapped... it'll be mapped on demand
         // But the on-demand mapping will be intelligent (not requiring a page fault)
+        // NOTE that `page_count` is the maximum number of pages, and the size of the underlying memory, but is supplied as the 
+        // size of both the allocated and available stacks, which means they technically overlap memory, but becaues a page can 
+        // only be in one stack at the same time, they'll never actually collide with each other
         PageStack {
-            allocated_pages: Stack::new(0, 0),
-            available_pages: Stack::new(0, 0),
+            allocated_pages: Stack::<Address, EXPAND_DOWN>::new(stack_base + (page_count * size_of::<Address>()) as Address, page_count),
+            available_pages: Stack::<Address, EXPAND_UP>::new(stack_base, page_count),
             borrower,
             mapper,
         }
@@ -97,7 +112,7 @@ impl<BORROWER: PageBorroer, MAPPER: PageMapper> PackStack<BORROWER, MAPPER> {
         if self.available_pages.is_empty() {
             if let Some((page_addr, num_pages)) = self.borrower.borrow_pages() {
                 for i in 0..num_pages {
-                    self.available_pages.push(page_addr + (i * PAGE_SIZE));
+                    self.available_pages.push(page_addr + (i * PAGE_SIZE) as Address);
                 }
             } else {
                 return None; // No more pages available
@@ -120,4 +135,43 @@ impl<BORROWER: PageBorroer, MAPPER: PageMapper> PackStack<BORROWER, MAPPER> {
         self.available_pages.push(page_addr);
         Some(page_addr)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_stack() {
+        let borrower = MockPageBorrower::new();
+        let mapper = MockPageMapper::new();
+
+        let ps = PageStack::<_, _, 4096>::new(&borrower, &mapper, 0x1000, 0);
+    }
+
+    #[test]
+    fn test_borrow() {
+        const pages: usize = 10;
+        const guard_band: u64 = 0x1122334455667788;
+
+        let mut borrower = MockPageBorrower::new();
+        let mapper = MockPageMapper::new();
+        let mut stack_memory = [0u64; pages];
+
+        borrower.expect_borrow_pages()
+            .times(1)
+            .return_const(Some((0x1000, 4)));
+
+        let mut ps = PageStack::<_, _, 4096>::new(&borrower, &mapper, stack_memory.as_ptr() as Address, pages);
+
+        stack_memory[4] = guard_band;
+        ps.allocate_page();
+
+        assert_eq!(stack_memory[0], 0x1000);
+        assert_eq!(stack_memory[1], 0x2000);
+        assert_eq!(stack_memory[2], 0x3000);
+        assert_eq!(stack_memory[3], 0x4000);
+        assert_eq!(stack_memory[4], guard_band)
+    }
+
 }
