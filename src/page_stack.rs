@@ -153,6 +153,7 @@ mod tests {
         let mapper = MockPageMapper::new();
 
         let ps = PageStack::<_, _, 4096>::new(&borrower, &mapper, 0x1000, 0);
+        // TODO: what can we assert here?
     }
 
     #[test]
