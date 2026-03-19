@@ -64,6 +64,8 @@ use mockall::predicate::*;
 use crate::stack::{Stack, EXPAND_UP, EXPAND_DOWN};
 use crate::types::Address;
 
+use core::ptr;
+
 // These traits must use interior mutability to accomplish their goals, as the 
 // interfaces are intentionally non-mut
 
@@ -82,7 +84,7 @@ pub trait PageMapper {
     // or something like?
     // Ok(b) -> address is mapped, b == true means the page was mapped, otherwise it was already mapped
     // Err -> couldn't map the page..
-    fn ensure_mapped(&self, page_addr: Address) -> Result<bool,()>;
+    fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,()>;
 }
 
 pub struct PageStack<'a, BORROWER: PageBorrower, MAPPER: PageMapper, const PAGE_SIZE: usize > {
@@ -111,6 +113,10 @@ impl<'a, BORROWER: PageBorrower, MAPPER: PageMapper, const PAGE_SIZE: usize> Pag
     pub fn allocate_page(&mut self) -> Option<Address> {
         if self.available_pages.is_empty() {
             if let Some((page_addr, num_pages)) = self.borrower.borrow_pages() {
+                let top_of_stack = self.available_pages.top();
+                let new_top = top_of_stack + (num_pages * size_of::<Address>()) as Address;
+                self.mapper.ensure_mapped(top_of_stack, new_top);
+
                 for i in 0..num_pages {
                     self.available_pages.push(page_addr + (i * PAGE_SIZE) as Address);
                 }
@@ -155,14 +161,21 @@ mod tests {
         const guard_band: u64 = 0x1122334455667788;
 
         let mut borrower = MockPageBorrower::new();
-        let mapper = MockPageMapper::new();
+        let mut mapper = MockPageMapper::new();
         let mut stack_memory = [0u64; pages];
+        let stack_memory_base = stack_memory.as_ptr() as Address;
+        let stack_end_after_additions = ptr::addr_of!(stack_memory[4]) as Address;
+
+        mapper.expect_ensure_mapped()
+            .times(1)
+            .with(predicate::eq(stack_memory_base), predicate::eq(stack_end_after_additions))
+            .return_const(Ok(false));
 
         borrower.expect_borrow_pages()
             .times(1)
             .return_const(Some((0x1000, 4)));
 
-        let mut ps = PageStack::<_, _, 4096>::new(&borrower, &mapper, stack_memory.as_ptr() as Address, pages);
+        let mut ps = PageStack::<_, _, 4096>::new(&borrower, &mapper, stack_memory_base, pages);
 
         stack_memory[4] = guard_band;
         ps.allocate_page();
