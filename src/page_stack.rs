@@ -58,7 +58,9 @@
 //! remain unmapped, and only mapped into place when required (although the pages can 
 //! be intelligently mapped, rather than requiring the overhead of a page fault)
 
+#[cfg(test)]
 use mockall::*;
+#[cfg(test)]
 use mockall::predicate::*;
 
 use crate::stack::{Stack, EXPAND_UP, EXPAND_DOWN};
@@ -69,14 +71,15 @@ use core::ptr;
 // These traits must use interior mutability to accomplish their goals, as the 
 // interfaces are intentionally non-mut
 
-#[automock]
+#[cfg_attr(test, automock)]
 pub trait PageBorrower {
     fn borrow_pages(&self) -> Option< (Address, usize) >;
 }
 
 // TODO: this will be implemented by the pager, but will need some form of protection in order to 
 // ensure it can be shared... need to implement some form of mutex
-#[automock]
+
+#[cfg_attr(test, automock)]
 pub trait PageMapper {
     //fn map_page(&mut self, page_addr: Address) -> bool;
     //fn unmap_page(&mut self, page_addr: Address) -> bool;

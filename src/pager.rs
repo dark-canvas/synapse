@@ -1,3 +1,16 @@
+//! Pager implementation
+//!
+//! The kernel is mapped to 0xFFFFFF8000000000
+//!   p4 index = 7f
+//!   p3 index = 0
+//!   p2 index = 0
+//!   p1 index = 0
+//!
+//!   let pl4_index = (virtual_addr >> 39) & 0o777;
+//!   let pl3_index = (virtual_addr >> 30) & 0o777;
+//!   let pl2_index = (virtual_addr >> 21) & 0o777;
+//!   let pl1_index = (virtual_addr >> 12) & 0o777;
+
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::PhysFrame;
 use x86_64::structures::paging::PageTable;
@@ -28,8 +41,13 @@ pub enum PageType {
 pub struct Pager {
     pl4_table: &'static mut PageTable,
     //page_stack_4kb: Stack<'static, usize>,
-}
 
+    // TODO: how to represent the borrower and mapper here, as they will have to have a reference to the pager, but 
+    // the pager hasn't yet been created...
+    //stack_4kb PageStack::<borrower, mapper, 4*1024>,
+    //stack_2mb PageStack::<borrower, mapper, 2*1024*1024>,
+    //stack_1gb PageStack::<borrower, mapper, 1*1024*1024*1024>,
+}
     
 fn page_in_use(page: usize, page_size: usize, module_list: &ModuleList) -> bool {
     let page_start = page * page_size;
