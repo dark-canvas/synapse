@@ -10,6 +10,8 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
-mockall = "0.14.0"
 satus-struct = { git = "https://github.com/dark-canvas/satus-struct" }
 x86_64 = { version = "0.15.4", default-features = false, features = [ "instructions" ] }
+
+[dev-dependencies]
+mockall = "0.14.0"
