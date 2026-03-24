@@ -26,6 +26,7 @@
 //! many of the brances and conditional can be optimized or compiled out entirely.
 
 use crate::types::Address;
+//use core::cmp::PartialEq
 
 pub const EXPAND_UP: bool = true;
 pub const EXPAND_DOWN: bool = false;
@@ -36,7 +37,7 @@ pub struct Stack<'a, T, const STACK_TYPE: bool> where T: Clone + Copy {
     pointer: usize,
 }
 
-impl<'a, T: Clone + Copy, const STACK_TYPE: bool> Stack<'a, T, STACK_TYPE> {
+impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK_TYPE> {
     pub fn new(base: Address, size: usize) -> Stack<'static, T, STACK_TYPE> {
         Stack { 
             base: unsafe { core::slice::from_raw_parts_mut(base as *mut T, size) }, 
@@ -129,6 +130,31 @@ impl<'a, T: Clone + Copy, const STACK_TYPE: bool> Stack<'a, T, STACK_TYPE> {
         }
         self.pointer -= self.direction() as usize;
         Some(self.base[self.pointer])
+    }
+
+    /// Expensive; performs a linear search
+    /// Could be made faster if the data was kept sorted, but given that this is (currently) only 
+    /// used to construct the page stacks initially, it's probably not horrible.
+    pub fn find(&self, value: T) -> Option<usize> {
+        let (start, end) = match STACK_TYPE {
+            EXPAND_UP => (0, self.pointer),
+            EXPAND_DOWN => (self.pointer, self.size)
+        };
+
+        for i in start..end {
+            if self.base[i] == value {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    pub fn remove_index(&mut self, index: usize) {
+        // TODO: assert index validity?
+        // swap the last item with this one
+        if let Some(last) = self.pop() {
+            self.base[index] = last;
+        }
     }
 }
 

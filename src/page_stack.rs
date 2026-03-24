@@ -68,12 +68,18 @@ use crate::types::Address;
 
 use core::ptr;
 
+use spin::Mutex;
+
 // These traits must use interior mutability to accomplish their goals, as the 
 // interfaces are intentionally non-mut
 
 #[cfg_attr(test, automock)]
 pub trait PageBorrower {
-    fn borrow_pages(&self) -> Option< (Address, usize) >;
+    // borrow a page from another source
+    // Returns a address, representing a page, and the size of the page
+    fn borrow_page(&self) -> Option< (Address, usize) >;
+
+    fn borrow_specific(&self, address: Address) -> Option< (Address, usize) >;
 }
 
 // TODO: this will be implemented by the pager, but will need some form of protection in order to 
@@ -90,15 +96,41 @@ pub trait PageMapper {
     fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,()>;
 }
 
-pub struct PageStack<'a, BORROWER: PageBorrower, MAPPER: PageMapper, const PAGE_SIZE: usize > {
+struct Stacks {
     allocated_pages: Stack<'static, Address, EXPAND_DOWN>,
     available_pages: Stack<'static, Address, EXPAND_UP>,
-    borrower: &'a BORROWER,
-    mapper: &'a MAPPER,
 }
 
-impl<'a, BORROWER: PageBorrower, MAPPER: PageMapper, const PAGE_SIZE: usize> PageStack<'a, BORROWER, MAPPER, PAGE_SIZE> {
-    pub fn new(borrower: &'a BORROWER, mapper: &'a MAPPER, stack_base: Address, page_count: usize) -> PageStack<'a, BORROWER, MAPPER, PAGE_SIZE> {
+impl Stacks {
+    fn new(stack_base: Address, page_count: usize) -> Self {
+        Stacks {
+            allocated_pages: Stack::<Address, EXPAND_DOWN>::new(stack_base + (page_count * size_of::<Address>()) as Address, page_count),
+            available_pages: Stack::<Address, EXPAND_UP>::new(stack_base, page_count),
+        }
+    }
+}
+
+// need a mutex to wrap allocated/available pages... can it wrap both?  
+// Or separate mutexes for each, and use `allocated_pages` only for debug?  (disable for production)
+// How to prevent double frees?
+// How to prevent asymmetric free i.e., 
+//   - allocate a 2mb page, but free it as a 4kb page?  Leaks memory)
+//   - allocate a 4kb page, but free it as a 2mb page?  (frees memory that could be in use)
+//     - iterate the page tables to ensure that the page in question is of the corret size before freeing
+pub struct PageStack<'a, MAPPER: PageMapper, const PAGE_SIZE: usize > {
+    // Do we even need to track allocated pages?  If available pages is kept sorted (which could be a requirement to 
+    // return larger pages to larger pack stacks) then determining double frees is just a matter of ensuring it isn't 
+    // already in the available stack.
+    // Ultimately, determining/preventing double frees should actually be on the programmer, not the OS... it *SHOULD* 
+    // be preventable without additionala support from the OS.
+    // wrap the whole thing in a mutex?
+    stacks: Mutex< Stacks >,
+    borrower: Option<&'a dyn PageBorrower>,  // &dyn Trait?
+    mapper: MAPPER, // if this calls into the pager, then it could call back into the 4kb allocator, so must be done *outside* of the lock
+}
+
+impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageStack<'a, MAPPER, PAGE_SIZE> {
+    pub fn new(mapper: MAPPER, stack_base: Address, page_count: usize) -> Self {
         // TODO determine where to place these stacks...
         // Allocate pages for the top and bottom of the stack, but leave the middle unmapped... it'll be mapped on demand
         // But the on-demand mapping will be intelligent (not requiring a page fault)
@@ -106,43 +138,100 @@ impl<'a, BORROWER: PageBorrower, MAPPER: PageMapper, const PAGE_SIZE: usize> Pag
         // size of both the allocated and available stacks, which means they technically overlap memory, but becaues a page can 
         // only be in one stack at the same time, they'll never actually collide with each other
         PageStack {
-            allocated_pages: Stack::<Address, EXPAND_DOWN>::new(stack_base + (page_count * size_of::<Address>()) as Address, page_count),
-            available_pages: Stack::<Address, EXPAND_UP>::new(stack_base, page_count),
-            borrower,
-            mapper,
+            stacks: Mutex::new(Stacks::new(stack_base, page_count)),
+            borrower: None,
+            mapper: mapper,
         }
     }
 
-    pub fn allocate_page(&mut self) -> Option<Address> {
-        if self.available_pages.is_empty() {
-            if let Some((page_addr, num_pages)) = self.borrower.borrow_pages() {
-                let top_of_stack = self.available_pages.top();
-                let new_top = top_of_stack + (num_pages * size_of::<Address>()) as Address;
-                self.mapper.ensure_mapped(top_of_stack, new_top);
+    pub fn set_borrow_source(&mut self, borrower: &'a dyn PageBorrower) {
+        self.borrower = Some(borrower);
+    }
 
-                for i in 0..num_pages {
-                    self.available_pages.push(page_addr + (i * PAGE_SIZE) as Address);
+    pub fn allocate_page(&self) -> Option<Address> {
+        let mut stacks_lock = self.stacks.lock();
+        let stacks = &mut stacks_lock;
+        if stacks.available_pages.is_empty() {
+            // TOOD: borrow page...
+            if let Some(borrower) = self.borrower {
+                if let Some((page_addr, page_size)) = borrower.borrow_page() {
+                    let num_pages = page_size / PAGE_SIZE;
+                    let top_of_stack = stacks.available_pages.top();
+                    let new_top = top_of_stack + (num_pages * size_of::<Address>()) as Address;
+
+                    // TODO: if this calls into the pager, it could allocate new 4kb pages, which could be 
+                    // calling back into this very same page stack (creating a dead lock?  Depends on whether spinlock is recursive)
+                    self.mapper.ensure_mapped(top_of_stack, new_top);
+
+                    for i in 0..num_pages {
+                        stacks.available_pages.push(page_addr + (i * PAGE_SIZE) as Address);
+                    }
                 }
-            } else {
-                return None; // No more pages available
+            }
+        }
+        //drop(available_pages_lock);
+
+        if stacks.available_pages.is_empty() {
+            None
+        } else {
+            let page = stacks.available_pages.pop().unwrap();
+            stacks.allocated_pages.push(page);
+            Some(page)
+        }
+    }
+
+    pub fn allocate_specific(&mut self, page_addr: Address) -> Option<Address> {
+        // TODO: ensure alignment of page_addr
+
+        // check if this page is in the available portion of our stack
+        // if not, try to borrow it (which will result in other pages being returned)
+        let mut stacks_lock = self.stacks.lock();
+        let stacks = &mut stacks_lock;
+        if let Some(index) = stacks.available_pages.find(page_addr) {
+            stacks.available_pages.remove_index(index);
+            stacks.allocated_pages.push(page_addr);
+            return Some(page_addr);
+        } else if let Some(borrower) = self.borrower {
+            if let Some( (base_address, size) ) = borrower.borrow_specific(page_addr) {
+                let num_pages = size/PAGE_SIZE;
+                // TODO: ensure mapped
+                for i in 0..num_pages {
+                    let new_page = base_address + (i * PAGE_SIZE) as Address;
+                    if new_page != page_addr {
+                        stacks.available_pages.push(new_page);
+                    }
+                }
             }
         }
 
-        self.allocated_pages.push(self.available_pages.pop().unwrap());
-        Some(self.allocated_pages.top())
+        None
     }
 
     pub fn deallocate_page(&mut self, page_addr: Address) -> Option<Address> {
         // TODO: page align the address
         // TODO: confirm it was actually allocated
+        let mut stacks_lock = self.stacks.lock();
+        let stacks = &mut stacks_lock;
 
-        if self.allocated_pages.is_empty() {
+        if stacks.allocated_pages.is_empty() {
             return None; // No pages to deallocate
         }
 
-        let page_addr = self.allocated_pages.pop().unwrap();
-        self.available_pages.push(page_addr);
+        // TODO: this isn't correct
+        let page_addr = stacks.allocated_pages.pop().unwrap();
+        stacks.available_pages.push(page_addr);
         Some(page_addr)
+    }
+}
+
+// for Mutex PageStack?  How to hanndle this?
+impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageBorrower for PageStack<'a, MAPPER, PAGE_SIZE> {
+    fn borrow_page(&self) -> Option< (Address, usize) > {
+        None
+    }
+
+    fn borrow_specific(&self, address: Address) -> Option< (Address, usize) > {
+        None
     }
 }
 
@@ -155,7 +244,7 @@ mod tests {
         let borrower = MockPageBorrower::new();
         let mapper = MockPageMapper::new();
 
-        let ps = PageStack::<_, _, 4096>::new(&borrower, &mapper, 0x1000, 0);
+        let ps = PageStack::<_, 4096>::new(mapper, 0x1000, 0);
         // TODO: what can we assert here?
     }
 
@@ -175,11 +264,12 @@ mod tests {
             .with(predicate::eq(stack_memory_base), predicate::eq(stack_end_after_additions))
             .return_const(Ok(false));
 
-        borrower.expect_borrow_pages()
+        borrower.expect_borrow_page()
             .times(1)
-            .return_const(Some((0x1000, 4)));
+            .return_const(Some((0x1000, 4*4096)));
 
-        let mut ps = PageStack::<_, _, 4096>::new(&borrower, &mapper, stack_memory_base, pages);
+        let mut ps = PageStack::< _, 4096>::new(mapper, stack_memory_base, pages);
+        ps.set_borrow_source(&borrower);
 
         stack_memory[4] = guard_band;
         ps.allocate_page();
