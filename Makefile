@@ -12,6 +12,10 @@ boot:
 	cp target/target.x86_64/debug/kernel ../satus/esp/efi/boot/kernel.elf
 	bash -c "../satus/run.sh"
 
+debug:
+	cp target/target.x86_64/debug/kernel ../satus/esp/efi/boot/kernel.elf
+	bash -c "../satus/debug.sh"
+
 clean:
 	cargo clean --target x86_64-unknown-linux-gnu
 	cargo clean 

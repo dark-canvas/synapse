@@ -11,6 +11,7 @@ panic = "abort"
 
 [dependencies]
 satus-struct = { git = "https://github.com/dark-canvas/satus-struct" }
+spin = "0.10.0"
 x86_64 = { version = "0.15.4", default-features = false, features = [ "instructions" ] }
 
 [dev-dependencies]
