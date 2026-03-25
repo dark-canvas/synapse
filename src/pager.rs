@@ -28,6 +28,7 @@ use x86_64::PhysAddr;
 
 use satus_struct::config::Config;
 use satus_struct::module_list::ModuleList;
+use satus_struct::memory_map::{MemoryMap, MemoryRegion};
 
 use crate::types::Address;
 use crate::stack::{Stack, EXPAND_UP, EXPAND_DOWN};
@@ -99,6 +100,11 @@ pub struct Pager<'a> {
     stack_2mb: PageStack::<'a, StubMapper, PAGE_SIZE_2MB>,
     stack_4kb: PageStack::<'a, StubMapper, PAGE_SIZE_4KB>,
 }
+
+// TODO: probably doesn't need to be public
+pub fn pages_required(size: usize) -> usize {
+    (size + PAGE_SIZE_4KB) / PAGE_SIZE_4KB
+}
     
 fn page_in_use(page: usize, page_size: usize, module_list: &ModuleList) -> bool {
     let page_start = page * page_size;
@@ -158,9 +164,16 @@ impl<'a> Pager<'a> {
 
     pub fn configure(&'a mut self, config: &Config) {
         let module_list = ModuleList::from_page(config.get_module_list_address());
+        let mmap = MemoryMap::from_page(config.get_memory_map_address());
 
         self.stack_2mb.set_borrow_source(&self.stack_1gb);
         self.stack_4kb.set_borrow_source(&self.stack_2mb);
+
+        // we're abour to populate the page stacks with all the avilable pages, but they're 
+        // current not mapped at all.
+        // The act of mapping pages to form the stacks will consume pages in order to create 
+        // l2, 3, and 4 tables, so we need some algorithm to select those pages from 
+        // the count of free pages
 
         // Need to push all available pages onto the stacks, preferring to push the largest (1gb) pages first
         // Need to know how much memory exists
