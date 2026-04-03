@@ -65,12 +65,27 @@ pub extern "C" fn _start() -> ! {
             var = out(reg) config_addr,
         );
     }
+
+    let mut serial = logger::SerialPort{};
+    write!(serial, "Starting Synapse...\n").unwrap();
+
     let config = Config::from_page(config_addr);
     let module_list = ModuleList::from_page(config.get_module_list_address());
 
-    let value = 5150;
-    let mut serial = logger::SerialPort{};
-    write!(serial, "Hello from kernel {}\n", value).unwrap();
+    write!(serial, "Module list:\n");
+    let num_modules = module_list.get_num_modules();
+    for i in 0..num_modules {
+        let module = module_list.get_module_info(i).unwrap();
+        let start = module.get_start_address();
+        let size = module.get_size() as Address;
+
+        write!(serial, "module {} -> 0x{:016x} - 0x{:016x} ({} bytes)\n",
+            i, start, start+size, size);
+    }
+
+    let kernel_load_info = module_list.get_module_info(0).unwrap();
+    let kernel_physical_start = kernel_load_info.get_start_address();
+    let kernel_size = kernel_load_info.get_size();
 
     let mmap = MemoryMap::from_page(config.get_memory_map_address());
     let num_regions = mmap.get_num_regions();
@@ -81,12 +96,16 @@ pub extern "C" fn _start() -> ! {
     for i in 0..num_regions {
         let region = mmap.get_memory_region(i).unwrap();
 
+        let (start, end) = region.get_address_range();
+
+        if kernel_physical_start >= start && kernel_physical_start < end {
+            write!(serial, "kernel resides in block {:016x} - {:016x}\n", start, end);
+        }
+
         // TODO: we need to do this for allocated as well...
         if region.get_type() != MemoryRegionType::Available {
             continue;
         }
-
-        let (start, end) = region.get_address_range();
 
         let mut count_4kb_pages = (end-start) as usize / 4096;
 
@@ -111,8 +130,8 @@ pub extern "C" fn _start() -> ! {
         total_2mb_pages += count_2mb_pages;
         total_1gb_pages += count_1gb_pages;
 
-        write!(serial, "Region 0x{:016x} - {:016x} type {} ({} 4kb pages, {} 2mb pages, {} 1gb pages)\n", 
-            start, end, region.get_type() as u8, count_4kb_pages, count_2mb_pages, count_1gb_pages).unwrap();
+        write!(serial, "Region {} 0x{:016x} - {:016x} type {} ({} 4kb pages, {} 2mb pages, {} 1gb pages)\n", 
+            i, start, end, region.get_type() as u8, count_4kb_pages, count_2mb_pages, count_1gb_pages).unwrap();
     }
     write!(serial, "Total: {} 4kb pages, {} 2mb pages, {} 1gb pages\n", total_4kb_pages, total_2mb_pages, total_1gb_pages);
 
@@ -122,13 +141,52 @@ pub extern "C" fn _start() -> ! {
     total_pages_required += pages_required(total_2mb_pages * size_of::<Address>());
     total_pages_required += pages_required(total_1gb_pages * size_of::<Address>());
 
-    // TODO: need to...
-    //  - find a way to select which 4kb pages to use
-    //  - map them into the page stacks
-    //  - account for them no longer being available (so they dont go on the available stack)
-    //  - ensure they're added to the allocated stack
-
+    // TODO: this is the count of pages required just to hold the page stack itself, but in order 
+    // to map these pages in we'll also need to create plm3,2 & 1 tables which will also require 
+    // additional 4kb pages
     write!(serial, "Creating the page stacks will require {} 4kb pages\n", total_pages_required);
+
+    // now iterate to find the pages...
+    let mut pages_found = 0;
+    let required_base = kernel_physical_start + kernel_size as Address;
+    // TODO: make const/global
+    let mask_1gb = (pager::PAGE_SIZE_1GB-1) as Address;
+    let mask_2mb = (pager::PAGE_SIZE_2MB-1) as Address;
+    let size_1gb = pager::PAGE_SIZE_1GB as Address;
+    let size_2mb = pager::PAGE_SIZE_2MB as Address;
+    for i in 0..num_regions {
+        let region = mmap.get_memory_region(i).unwrap();
+
+        let (start, end) = region.get_address_range();
+        let mut current = start;
+
+        while current < end && pages_found != total_pages_required {
+            // skip past any 1gb pages
+            while current & mask_1gb == 0 && (current + size_1gb) < end {
+                current += size_1gb;
+            }
+
+            // skip past any 2mb pages
+            while current & mask_2mb == 0 && (current + size_2mb) < end {
+                current += size_2mb;
+            }
+
+            // now select 4kb pages until we hit a 2mb aligned page (note that 1gb is also 2mb aligned)
+            loop {
+                current += 4096;
+                if current > required_base {
+                    write!(serial, "region {:3} page {:4} -> 0x{:016x}\n", i, pages_found+1, current);
+                    pages_found += 1;
+                }
+
+                if current & mask_2mb == 0 || current >= end || pages_found == total_pages_required {
+                    break;
+                }
+            } 
+        }
+    }
+
+    write!(serial, "Creating pager...\n");
 
     let mut pager = Pager::new();
     pager.configure(&config);
