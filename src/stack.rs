@@ -27,9 +27,15 @@
 
 use crate::types::Address;
 //use core::cmp::PartialEq
+use core::ops::Index; 
 
 pub const EXPAND_UP: bool = true;
 pub const EXPAND_DOWN: bool = false;
+
+pub trait SimpleStack<T> {
+    fn push(&mut self, value: T);
+    fn pop(&mut self) -> Option<T>;
+}
 
 pub struct Stack<'a, T, const STACK_TYPE: bool> where T: Clone + Copy {
     size: usize,
@@ -107,31 +113,6 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
         self.capacity() - self.len()
     }
 
-    pub fn push(&mut self, value: T) {
-        if self.is_full() {
-            panic!("Stack overflow");
-        }
-        
-        match STACK_TYPE {
-            EXPAND_UP => {
-                self.base[self.pointer] = value;
-                self.pointer += 1;
-            },
-            EXPAND_DOWN => {
-                self.pointer -= 1;
-                self.base[self.pointer] = value;
-            }
-        }
-    }
-
-    pub fn pop(&mut self) -> Option<T> {
-        if self.is_empty() {
-            return None;
-        }
-        self.pointer -= self.direction() as usize;
-        Some(self.base[self.pointer])
-    }
-
     /// Expensive; performs a linear search
     /// Could be made faster if the data was kept sorted, but given that this is (currently) only 
     /// used to construct the page stacks initially, it's probably not horrible.
@@ -155,6 +136,40 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
         if let Some(last) = self.pop() {
             self.base[index] = last;
         }
+    }
+}
+
+impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> SimpleStack<T> for  Stack<'a, T, STACK_TYPE> {
+    fn push(&mut self, value: T) {
+        if self.is_full() {
+            panic!("Stack overflow");
+        }
+        
+        match STACK_TYPE {
+            EXPAND_UP => {
+                self.base[self.pointer] = value;
+                self.pointer += 1;
+            },
+            EXPAND_DOWN => {
+                self.pointer -= 1;
+                self.base[self.pointer] = value;
+            }
+        }
+    }
+
+    fn pop(&mut self) -> Option<T> {
+        if self.is_empty() {
+            return None;
+        }
+        self.pointer -= self.direction() as usize;
+        Some(self.base[self.pointer])
+    }
+}
+
+impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Index<usize> for  Stack<'a, T, STACK_TYPE> {
+    type Output = T;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.base[index]
     }
 }
 

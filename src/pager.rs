@@ -19,7 +19,11 @@
 //!   - 0xFFFFFFE000000000 - 0xFFFFFFE000200000 -> 2mb page stack
 //!   - 0xFFFFFFE000200000 - 0xFFFFFFE000201000 -> 1gb page stack
 
+use core::ops::Index; 
+use core::ptr;
+
 use x86_64::registers::control::Cr3;
+use x86_64::structures::paging::Size4KiB;
 use x86_64::structures::paging::PhysFrame;
 use x86_64::structures::paging::PageTable;
 use x86_64::structures::paging::PageTableFlags;
@@ -31,14 +35,18 @@ use satus_struct::module_list::ModuleList;
 use satus_struct::memory_map::{MemoryMap, MemoryRegion};
 
 use crate::types::Address;
-use crate::stack::{Stack, EXPAND_UP, EXPAND_DOWN};
+use crate::stack::{Stack, SimpleStack, EXPAND_UP, EXPAND_DOWN};
 use crate::page_stack::{PageStack, PageBorrower, PageMapper};
 
 //use log::info;
 
-pub const PAGE_SIZE_4KB: usize = 4*1096;
+pub const PAGE_SIZE_4KB: usize = 4*1024;
 pub const PAGE_SIZE_2MB: usize = 2*1024*1024;
 pub const PAGE_SIZE_1GB: usize = 1*1024*1024*1024;
+
+pub const PAGE_MASK_4KB: Address = 4*1024-1;
+pub const PAGE_MASK_2MB: Address = 2*1024*1024-1;
+pub const PAGE_MASK_1GB: Address = 1*1024*1024*1024-1;
 
 const PHYSICAL_OFFSET: Address = 0xFFFFFF0000000000;
 
@@ -50,38 +58,182 @@ const PAGE_STACK_4KB_MAX_PAGES: usize = 134217728;
 const PAGE_STACK_2MB_MAX_PAGES: usize = 262144;
 const PAGE_STACK_1GB_MAX_PAGES: usize = 512;
 
+#[derive(Copy, Clone)]
+pub struct PhysicalAddress(Address);
+#[derive(Copy, Clone)]
+pub struct VirtualAddress(Address);
+
 pub enum PageType {
     Page4K,
     Page2M,
     Page1G,
 }
 
-/*
-struct BorrowsFrom<T> {
-    stack: &T,
+type PageAllocator = fn() -> Result< Address, &'static str>;
+// Not sure if the error string is actually useful here
+type CreatePageTable = fn() -> Result< PhysFrame::<Size4KiB>, &'static str>;
+
+// TODO: move to a common/helper module?
+// TODO: these are now "is_x_page_aligned" functions
+// TODO: add actual is_x_page function
+fn is_1gb_page(addr: Address) -> bool {
+    (addr & PAGE_MASK_1GB == 0)
 }
 
-impl<T> BorrowsFrom<T> {
-    fn new(source: &T) -> Self {
-        BorrowsFrom {
-            stack: source,
+fn is_2mb_page(addr: Address) -> bool {
+    (addr & PAGE_MASK_2MB == 0) //&& !is_1gb_page(addr)
+}
+
+fn is_4kb_page(addr: Address) -> bool {
+    (addr & PAGE_MASK_4KB == 0) //&& !is_2mb_page(addr) && !is_1gb_page(addr)
+}
+
+fn next_1gb_page(addr: Address) -> Address {
+    (addr + PAGE_SIZE_1GB as Address) & !PAGE_MASK_1GB
+}
+
+fn next_2mb_page(addr: Address) -> Address {
+    (addr + PAGE_SIZE_2MB as Address) & !PAGE_MASK_2MB
+}
+
+fn next_4kb_page(addr: Address) -> Address {
+    (addr + PAGE_SIZE_4KB as Address) & !PAGE_MASK_4KB
+}
+
+// TODO: need an implementation of this for getting 4kb, 2mb and 1gb available pages 
+// from the mmap structure
+// Remember to remove the pages which we consumed trying to map the page stacks
+struct PageIterator<'a> {
+    mmap: &'a MemoryMap,
+    page_size: Address,
+    current_region: usize,
+    current_page: Option<Address>,
+}
+
+impl<'a> PageIterator<'a> {
+    pub fn new(mmap: &'a MemoryMap, page_size: usize) -> Self {
+        PageIterator{
+            mmap,
+            page_size: page_size as Address,
+            current_region: 0,
+            current_page: None,
         }
+    }
+
+    pub fn get_count(&self) -> usize {
+        // iterate all the pages, without editing our internal state
+        let mut current_region = 0;
+        let mut current_page : Option<Address> = None;
+        let mut count = 0;
+        loop {
+            let (region, page, result) = self.iterate(current_region, current_page);
+            if result == None {
+                break;
+            }
+            count += 1;
+            current_region = region;
+            current_page = Some(page);
+        }
+        count
+    }
+
+    fn iterate(&self, current_region: usize, start_page: Option<Address>) -> (usize, Address, Option<Address>) {
+        let mut start_page = start_page;
+        let num_regions = self.mmap.get_num_regions();
+
+        //println!("Iterating page stack for page size 0x{:x}, starting at region {}, page 0x{:x?}", self.page_size, current_region, start_page);
+
+        for i in current_region..num_regions {
+            //current_region = i;
+            let region = self.mmap.get_memory_region(i).unwrap();
+
+            let (start, end) = region.get_address_range();
+            let mut current = match start_page {
+                Some(sp) => { start_page = None; sp },
+                None => start,
+            };
+
+            while current < end  && current + PAGE_SIZE_4KB as Address <= end {
+                // skip past any 1gb pages
+                while is_1gb_page(current) && next_1gb_page(current) <= end {
+                    let next = next_1gb_page(current);
+                    if self.page_size == PAGE_SIZE_1GB as Address {
+                        //println!("  Returning 0x{:x}", current);
+                        return (i, next, Some(current));
+                    }
+                    current = next;
+                }
+
+                // skip past any 2mb pages
+                // TODO: if we find a 1GB aligned page we must break and restart...
+                while is_2mb_page(current) && next_2mb_page(current) <= end {
+                    if is_1gb_page(current) && next_1gb_page(current) <= end {
+                        break;
+                    }
+
+                    let next = next_2mb_page(current);
+                    if self.page_size == PAGE_SIZE_2MB as Address {
+                        //println!("  Returning 0x{:x}", current);
+                        return (i, next, Some(current));
+                    }
+                    current = next;
+                }
+
+                while is_4kb_page(current) && next_4kb_page(current) <= end {
+                    if is_2mb_page(current) && next_2mb_page(current) <= end {
+                        break;
+                    }
+
+                    let next = next_4kb_page(current);
+                    if self.page_size == PAGE_SIZE_4KB as Address {
+                        //println!("  Returning 0x{:x}", current);
+                        return (i, next, Some(current));
+                    }
+                    current = next;
+                }
+
+
+                // TODO: Can this be made the same as the above style loops?
+                // If so... can it be a macro, or a templated function?
+                // now select 4kb pages until we hit a 2mb aligned page (note that 1gb is also 2mb aligned)
+                /*
+                loop {
+                    let next = current + PAGE_SIZE_4KB as Address;
+
+                    if self.page_size == PAGE_SIZE_4KB as Address && next <= end {
+                        println!("  Returning {}", current);
+                        return (i, next, Some(current));
+                    }
+
+                    current = next;
+
+                    // if we hit a 2mb aligned page, break out of the loop to see if it's a full 2mb page
+                    if current & PAGE_MASK_2MB == 0 || current >= end {
+                        break;
+                    }
+
+                }*/
+            }
+        }
+        //println!("  Returning None");
+        return (0, 0, None);
     }
 }
 
-impl<T> PageBorrower for BorrowsFrom<T> {
-    fn borrow_pages(&self) -> Option< (Address, usize) > {
-        /*
-        match self.stack.allocate_page() {
-            Ok(address) => Ok( (Address, 1) ),
-            None => None
-        }
-        */
-        None
+// 2. Implement the Iterator trait
+impl<'a> Iterator for PageIterator<'a> {
+    // Specify the type of item the iterator yields
+    type Item = Address;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (region, page, result) = self.iterate(self.current_region, self.current_page);
+        self.current_region = region;
+        self.current_page = Some(page);
+        result
     }
 }
-*/
 
+// TODO: remove?
 #[derive(Clone)]
 struct StubMapper {}
 
@@ -92,7 +244,10 @@ impl PageMapper for StubMapper {
 }
 
 pub struct Pager<'a> {
-    pl4_table: &'static mut PageTable,
+    //pl4_table: &'static mut PageTable,
+
+    /// Must return a zero'd out 4kb physical page address
+    //create_page_table: GetPhysicalPage,
 
     // TODO: how to represent the borrower and mapper here, as they will have to have a reference to the pager, but 
     // the pager hasn't yet been created...
@@ -103,29 +258,9 @@ pub struct Pager<'a> {
 
 // TODO: probably doesn't need to be public
 pub fn pages_required(size: usize) -> usize {
-    (size + PAGE_SIZE_4KB) / PAGE_SIZE_4KB
+    (size + (PAGE_SIZE_4KB - 1)) / PAGE_SIZE_4KB
 }
     
-fn page_in_use(page: usize, page_size: usize, module_list: &ModuleList) -> bool {
-    let page_start = page * page_size;
-    let page_end = page_start + page_size;
-
-    // TODO: get_module_count() instead?
-    // Or add an iterator?
-    for i in 0..module_list.get_num_modules() {
-        let module_info = module_list.get_module_info(i).expect("Invalid module index");
-        let module_start = module_info.get_start_address() as usize;
-        let module_end = module_start + module_info.get_size() as usize;
-
-        if (page_start >= module_start && page_start < module_end) || 
-           (page_end > module_start && page_end <= module_end) {
-            return true;
-        }
-    }
-
-    false
-}
-
 impl<'a> Pager<'a> {
     /// Returns an instance of Pager with any non-specific configuration done.
     /// System-specific configuration must be performed first (via the configure method)
@@ -154,7 +289,7 @@ impl<'a> Pager<'a> {
             // Or... map all of physical memory, identity mapped into the second last pl4 entry
 
             Pager { 
-                pl4_table: pl4_table,  // Make this an address instead?
+                //pl4_table: pl4_table,  // Make this an address instead?
                 stack_1gb: PageStack::<_, PAGE_SIZE_1GB>::new(mapper.clone(), PAGE_STACK_1GB_BASE, PAGE_STACK_1GB_MAX_PAGES),
                 stack_2mb: PageStack::<_, PAGE_SIZE_2MB>::new(mapper.clone(), PAGE_STACK_2MB_BASE, PAGE_STACK_2MB_MAX_PAGES),
                 stack_4kb: PageStack::<_, PAGE_SIZE_4KB>::new(mapper.clone(), PAGE_STACK_4KB_BASE, PAGE_STACK_4KB_MAX_PAGES),
@@ -162,12 +297,107 @@ impl<'a> Pager<'a> {
         }
     }
 
+    // might need to template this function?
+    // PageIterator could be a trait, or a concrete class with different data?
+    // TODO: this only works for expand up stacks...
+    fn populate_page_stack<T, F>(&self, stack: &mut T, pages: PageIterator, new_page: &mut F) 
+        where T : SimpleStack<Address> + Index<usize>,
+              F : FnMut() -> Option< Address > {
+
+        let stack_base_address = (ptr::addr_of!(stack[0]) as *const Address) as Address;
+        let pages_count = pages.get_count();
+        let required_stack_size_in_pages = pages_required(pages_count * size_of::<Address>());
+        println!("Page stack contains {} pages, consuming {} pages for the stack", pages_count, required_stack_size_in_pages);        
+
+        for i in 0..required_stack_size_in_pages {
+            self._map_physical_to_virtual(
+                PhysicalAddress((new_page)().expect("Unable to map page stack")), 
+                VirtualAddress(stack_base_address + (i*PAGE_SIZE_4KB) as Address),
+                PageTableFlags::WRITABLE,
+                || {
+                    println!("Acquiring new page for page stack: {}", i);
+                    (new_page)().map(|addr| {
+                        unsafe {  
+                            core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                            PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
+                        }
+                    })
+                }
+            ).expect("Unable to map");
+        }
+        for page in pages {
+            stack.push(page);
+        }
+    }
+
     pub fn configure(&'a mut self, config: &Config) {
         let module_list = ModuleList::from_page(config.get_module_list_address());
         let mmap = MemoryMap::from_page(config.get_memory_map_address());
 
+        // TODO: implementing a custom copy trait must allow this to be moved into the `new` call
+        // we don't really want to allow a 'copy' per-se, as there should only ever be one pager, 
+        // but in order to return the pager, it must be moved from the stack to the caller's 
+        // stack which implies a copy and drop, which can't be done if the page stack's contain 
+        // these references...
         self.stack_2mb.set_borrow_source(&self.stack_1gb);
         self.stack_4kb.set_borrow_source(&self.stack_2mb);
+
+        let num_regions = mmap.get_num_regions();
+        let kernel_load_info = module_list.get_module_info(0).unwrap();
+        let kernel_physical_start = kernel_load_info.get_start_address();
+        let kernel_size = kernel_load_info.get_size();
+        let mut required_base = kernel_physical_start + kernel_size as Address;
+        // TODO: make const/global
+        let mask_1gb = (PAGE_SIZE_1GB-1) as Address;
+        let mask_2mb = (PAGE_SIZE_2MB-1) as Address;
+        let size_1gb = PAGE_SIZE_1GB as Address;
+        let size_2mb = PAGE_SIZE_2MB as Address;
+
+        let mut page_allocator = || {
+            for i in 0..num_regions {
+                let region = mmap.get_memory_region(i).unwrap();
+
+                let (start, end) = region.get_address_range();
+                let mut current = start;
+
+                while current < end /*&& pages_found != total_pages_required */{
+                    // skip past any 1gb pages
+                    while current & mask_1gb == 0 && (current + size_1gb) < end {
+                        current += size_1gb;
+                    }
+
+                    // skip past any 2mb pages
+                    while current & mask_2mb == 0 && (current + size_2mb) < end {
+                        current += size_2mb;
+                    }
+
+                    // now select 4kb pages until we hit a 2mb aligned page (note that 1gb is also 2mb aligned)
+                    loop {
+                        current += 4096;
+                        if current > required_base {
+                            //write!(serial, "region {:3} page {:4} -> 0x{:016x}\n", i, pages_found+1, current);
+                            //pages_found += 1;
+                            required_base = current;
+                            return Some(current);
+                        }
+
+                        if current & mask_2mb == 0 || current >= end /*|| pages_found == total_pages_required*/ {
+                            break;
+                        }
+                    } 
+                }
+            }
+            None
+        };
+
+        self.populate_page_stack(&mut self.stack_1gb.stacks.lock().allocated_pages, PageIterator::new(&mmap, PAGE_SIZE_1GB), &mut page_allocator);
+        self.populate_page_stack(&mut self.stack_2mb.stacks.lock().allocated_pages, PageIterator::new(&mmap, PAGE_SIZE_2MB), &mut page_allocator);
+        self.populate_page_stack(&mut self.stack_4kb.stacks.lock().allocated_pages, PageIterator::new(&mmap, PAGE_SIZE_4KB), &mut page_allocator);
+
+        // now that all of this in place, we can explicitly allocate the allocated pages 
+        // the the page stack itself will ensure the structure is properly mapped 
+        // underneath by getting pages from the 4kb stack, and potentially borrowing 
+        // from the 2mb or 1gb stacks.
 
         // we're abour to populate the page stacks with all the avilable pages, but they're 
         // current not mapped at all.
@@ -215,7 +445,11 @@ impl<'a> Pager<'a> {
         let pl1_index = (virtual_addr >> 12) & 0o777;
 
         unsafe {
-            let pl4_entry = &self.pl4_table[pl4_index];
+            let (pl4_frame, _flags) = Cr3::read();
+            let pl4_addr: PhysAddr = pl4_frame.start_address();
+            let pl4_table = & *(pl4_frame.start_address().as_u64() as *const PageTable);
+
+            let pl4_entry = &pl4_table[pl4_index];
             if pl4_entry.is_unused() {
                 return None;
             }
@@ -250,10 +484,90 @@ impl<'a> Pager<'a> {
         }
     }
 
+    pub fn map_physical_to_virtual(
+        &self, 
+        phys_addr: PhysicalAddress, 
+        virtual_addr: VirtualAddress, 
+        flags: x86_64::structures::paging::PageTableFlags) -> Result<(), &'static str> {
+        
+        self._map_physical_to_virtual( phys_addr, virtual_addr, flags, 
+            || { 
+                self.stack_4kb.allocate_page().map(
+                    |addr| {
+                        unsafe {  
+                            core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                            PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
+                        }
+                    }
+                )  
+            })
+    }
+
+    fn _map_physical_to_virtual<F>(
+        &self, 
+        phys_addr: PhysicalAddress, 
+        virtual_addr: VirtualAddress, 
+        flags: x86_64::structures::paging::PageTableFlags,
+        mut create_page_table: F) -> Result<(), &'static str>
+
+        where F: FnMut() -> Option< PhysFrame::<Size4KiB> > {
+
+        let virtual_addr = virtual_addr.0;
+        let phys_addr = phys_addr.0;
+        let pl4_index = ((virtual_addr >> 39) & 0o777) as usize;
+        let pl3_index = ((virtual_addr >> 30) & 0o777) as usize;
+        let pl2_index = ((virtual_addr >> 21) & 0o777) as usize;
+        let pl1_index = ((virtual_addr >> 12) & 0o777) as usize;
+
+        println!("Mapping physical address {:x} to virtual address {:x} with flags {:?}", phys_addr, virtual_addr, flags);
+
+        unsafe {
+            let (pl4_frame, _flags) = Cr3::read();
+            let pl4_addr: PhysAddr = pl4_frame.start_address();
+            let pl4_table = &mut *(pl4_frame.start_address().as_u64() as *mut PageTable);
+
+            let pl4_entry = &mut pl4_table[pl4_index];
+            if pl4_entry.is_unused() {
+                let new_frame = (create_page_table)().ok_or("Couldn't create page table")?;
+                //info!("Setting PML4 entry {} to new frame at {:?}", pl4_index, new_frame.start_address());
+                pl4_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+                //info!("Set PML4 entry {} to new frame at {:?}", pl4_index, new_frame.start_address());
+            }
+
+            let pl3_table = &mut *(pl4_entry.addr().as_u64() as *mut PageTable);
+            let pl3_entry = &mut pl3_table[pl3_index];
+            if pl3_entry.is_unused() {
+                let new_frame = (create_page_table)().ok_or("Couldn't create page table")?;
+                pl3_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+            }
+
+            let pl2_table = &mut *(pl3_entry.addr().as_u64() as *mut PageTable);
+            let pl2_entry = &mut pl2_table[pl2_index];
+            if pl2_entry.is_unused() {
+                let new_frame = (create_page_table)().ok_or("Couldn't create page table")?;
+                pl2_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+            }
+
+            let pl1_table = &mut *(pl2_entry.addr().as_u64() as *mut PageTable);
+            let pl1_entry = &mut pl1_table[pl1_index];
+            if !pl1_entry.is_unused() {
+                return Err("Virtual address already mapped");
+            }
+
+            // For simplicity, we only support mapping a single page here. In a real implementation, you'd want to handle larger mappings.
+            pl1_entry.set_addr(PhysAddr::new(phys_addr as u64), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+        }
+
+        Ok(())
+    }
 
     pub fn output_mmap(&self) {
         unsafe {
-            for (i, entry) in self.pl4_table.iter().enumerate() {
+            let (pl4_frame, _flags) = Cr3::read();
+            let pl4_addr: PhysAddr = pl4_frame.start_address();
+            let pl4_table = & *(pl4_frame.start_address().as_u64() as *const PageTable);
+
+            for (i, entry) in pl4_table.iter().enumerate() {
                 if !entry.is_unused() {
                     //info!("pl4 Entry {}: {:?}", i, entry);
 
@@ -273,5 +587,144 @@ impl<'a> Pager<'a> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use satus_struct::memory_map::MemoryRegionType;
+
+    fn pages_4kb(n: usize) -> Address { (PAGE_SIZE_4KB * n) as Address }
+    fn pages_2mb(n: usize) -> Address { (PAGE_SIZE_2MB * n) as Address }
+    fn pages_1gb(n: usize) -> Address { (PAGE_SIZE_1GB * n) as Address }
+
+    #[test]
+    fn test_page_iterator() {
+        // create a mmap with various edge cases
+        let mmapPage = [0u8; 4096];
+        let mmapPageAddr = mmapPage.as_ptr() as Address;
+        let mut mmap = MemoryMap::new_from_page(mmapPageAddr).unwrap();
+
+        let mut base: Address = 0;
+
+        // 1. multiple 4kb pages in a region
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_4kb(2));
+
+        // 2. a single 4kb page in a region
+        base = pages_4kb(4);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_4kb(1));
+
+        // 3. multiple 2mb pages in a region
+        base = PAGE_SIZE_2MB as Address;
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_2mb(2));
+
+        // 4. a single 2mb page in a region
+        base = pages_2mb(4);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_2mb(1));
+
+        // 5. multiple 1gb pages in a region
+        base = PAGE_SIZE_1GB as Address;
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_1gb(3));
+
+        // 6. a single 1gb page in a region
+        base = pages_1gb(4);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_1gb(1));
+
+        // 7. some 4kb pages followed by a 2mb page
+        base = pages_1gb(6) - pages_4kb(2);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_4kb(2) + pages_2mb(1));
+
+        // 8. some 4kb pages followed by a 1gb page
+        base = pages_1gb(7) - pages_4kb(2);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_4kb(2) + pages_1gb(1));
+
+        // 9. some 2mb pages followed by a 1gb page
+        base = pages_1gb(8) - pages_2mb(2);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_2mb(2) + pages_1gb(1));
+
+        // 10. a 2mb page followed by some 4kb pages
+        base = pages_1gb(9) - pages_2mb(1);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_2mb(1) + pages_4kb(2));
+
+        // 11. a 1gb page followed by some 4kb pages
+        base = pages_1gb(10);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_1gb(1) + pages_4kb(2));
+
+        // 12. a 1gb page followed by some 2mb pages
+        base = pages_1gb(11);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_1gb(1) + pages_2mb(2));
+
+        // 13. some 4kb pages followed by a 2mb page, a 1gb page, then a 2mb page and a 4kb page
+        base = pages_1gb(13) - pages_2mb(1) - pages_4kb(2);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_4kb(2) + pages_2mb(1) + pages_1gb(1) + pages_2mb(1) + pages_4kb(1));
+
+        let mut page_iter_4kb = PageIterator::new(&mmap, PAGE_SIZE_4KB);
+        let mut page_iter_2mb = PageIterator::new(&mmap, PAGE_SIZE_2MB);
+        let mut page_iter_1gb = PageIterator::new(&mmap, PAGE_SIZE_1GB);
+
+        // 1. multiple 4kb pages in a region
+        assert_eq!(page_iter_4kb.next(), Some(0));
+        assert_eq!(page_iter_4kb.next(), Some(0x1000));
+        
+        // 2. a single 4kb page in a region
+        assert_eq!(page_iter_4kb.next(), Some(0x4000));
+
+        // 3. multiple 2mb pages in a region
+        assert_eq!(page_iter_2mb.next(), Some(0x200000));
+        assert_eq!(page_iter_2mb.next(), Some(0x400000));
+
+        // 4. a single 2mb page in a region
+        assert_eq!(page_iter_2mb.next(), Some(0x800000));
+
+        // 5. multiple 1gb pages in a region
+        assert_eq!(page_iter_1gb.next(), Some(0x40000000));
+        assert_eq!(page_iter_1gb.next(), Some(0x80000000));
+        assert_eq!(page_iter_1gb.next(), Some(0xC0000000));
+
+        // 6. a single 1gb page in a region
+        assert_eq!(page_iter_1gb.next(), Some(0x100000000));
+
+        // 7. some 4kb pages followed by a 2mb page
+        assert_eq!(page_iter_4kb.next(), Some(0x180000000 - pages_4kb(2)));
+        assert_eq!(page_iter_4kb.next(), Some(0x180000000 - pages_4kb(1)));
+        assert_eq!(page_iter_2mb.next(), Some(0x180000000));
+
+        // 8. some 4kb pages followed by a 1gb page
+        assert_eq!(page_iter_4kb.next(), Some(0x1C0000000 - pages_4kb(2)));
+        assert_eq!(page_iter_4kb.next(), Some(0x1C0000000 - pages_4kb(1)));
+        assert_eq!(page_iter_1gb.next(), Some(0x1C0000000));
+
+        // 9. some 2mb pages followed by a 1gb page
+        assert_eq!(page_iter_2mb.next(), Some(0x200000000 - pages_2mb(2)));
+        assert_eq!(page_iter_2mb.next(), Some(0x200000000 - pages_2mb(1)));
+        assert_eq!(page_iter_1gb.next(), Some(0x200000000));
+                                            
+        // 10. a 2mb page followed by some 4kb pages
+        assert_eq!(page_iter_2mb.next(), Some(0x240000000 - pages_2mb(1)));
+        assert_eq!(page_iter_4kb.next(), Some(0x240000000));
+        assert_eq!(page_iter_4kb.next(), Some(0x240000000 + pages_4kb(1)));
+
+        // 11. a 1gb page followed by some 4kb pages
+        assert_eq!(page_iter_1gb.next(), Some(0x280000000));
+        assert_eq!(page_iter_4kb.next(), Some(0x2C0000000));
+        assert_eq!(page_iter_4kb.next(), Some(0x2C0000000 + pages_4kb(1)));
+
+        // 12. a 1gb page followed by some 2mb pages
+        assert_eq!(page_iter_1gb.next(), Some(0x2C0000000));
+        assert_eq!(page_iter_2mb.next(), Some(0x300000000 + pages_2mb(0)));
+        assert_eq!(page_iter_2mb.next(), Some(0x300000000 + pages_2mb(1)));
+
+        // 13. some 4kb pages followed by a 2mb page, a 1gb page, then a 2mb page and a 4kb page
+        assert_eq!(page_iter_4kb.next(), Some(0x340000000 - pages_2mb(1) - pages_4kb(2)));
+        assert_eq!(page_iter_4kb.next(), Some(0x340000000 - pages_2mb(1) - pages_4kb(1)));
+        assert_eq!(page_iter_2mb.next(), Some(0x340000000 - pages_2mb(1)));
+        assert_eq!(page_iter_1gb.next(), Some(0x340000000));
+        assert_eq!(page_iter_2mb.next(), Some(0x380000000));
+        assert_eq!(page_iter_4kb.next(), Some(0x380000000 + pages_2mb(1) + pages_4kb(0)));
+
+        assert_eq!(page_iter_4kb.next(), None);
+        assert_eq!(page_iter_2mb.next(), None);
+        assert_eq!(page_iter_1gb.next(), None);
     }
 }

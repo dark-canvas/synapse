@@ -63,7 +63,7 @@ use mockall::*;
 #[cfg(test)]
 use mockall::predicate::*;
 
-use crate::stack::{Stack, EXPAND_UP, EXPAND_DOWN};
+use crate::stack::{Stack, SimpleStack, EXPAND_UP, EXPAND_DOWN};
 use crate::types::Address;
 
 use core::ptr;
@@ -96,11 +96,12 @@ pub trait PageMapper {
     fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,()>;
 }
 
-struct Stacks {
-    allocated_pages: Stack<'static, Address, EXPAND_DOWN>,
-    available_pages: Stack<'static, Address, EXPAND_UP>,
+pub struct Stacks {
+    pub /* TODO (in crate::pager)*/ allocated_pages: Stack<'static, Address, EXPAND_DOWN>,
+    pub /* TODO (in crate::pager)*/ available_pages: Stack<'static, Address, EXPAND_UP>,
 }
 
+// TODO: this should be private
 impl Stacks {
     fn new(stack_base: Address, page_count: usize) -> Self {
         Stacks {
@@ -124,7 +125,7 @@ pub struct PageStack<'a, MAPPER: PageMapper, const PAGE_SIZE: usize > {
     // Ultimately, determining/preventing double frees should actually be on the programmer, not the OS... it *SHOULD* 
     // be preventable without additionala support from the OS.
     // wrap the whole thing in a mutex?
-    stacks: Mutex< Stacks >,
+    pub /* TODO (in crate::pager)*/ stacks: Mutex< Stacks >,
     borrower: Option<&'a dyn PageBorrower>,  // &dyn Trait?
     mapper: MAPPER, // if this calls into the pager, then it could call back into the 4kb allocator, so must be done *outside* of the lock
 }
