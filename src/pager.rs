@@ -32,7 +32,7 @@ use x86_64::PhysAddr;
 
 use satus_struct::config::Config;
 use satus_struct::module_list::ModuleList;
-use satus_struct::memory_map::{MemoryMap, MemoryRegion};
+use satus_struct::memory_map::{MemoryMap, MemoryRegion, MemoryRegionType};
 
 use crate::types::Address;
 use crate::stack::{Stack, SimpleStack, EXPAND_UP, EXPAND_DOWN};
@@ -108,6 +108,8 @@ struct PageIterator<'a> {
     page_size: Address,
     current_region: usize,
     current_page: Option<Address>,
+    region_type: Option<MemoryRegionType>,
+    base_address: Option<Address>,
 }
 
 impl<'a> PageIterator<'a> {
@@ -117,7 +119,29 @@ impl<'a> PageIterator<'a> {
             page_size: page_size as Address,
             current_region: 0,
             current_page: None,
+            region_type: None,
+            base_address: None,
         }
+    }
+
+    pub fn with_region_type(mut self, region_type: MemoryRegionType) -> Self {
+        self.region_type = Some(region_type);
+        self
+    }
+
+    pub fn with_base_address(mut self, base_address: Address) -> Self {
+        self.base_address = Some(base_address);
+        self
+    }
+
+    fn passes_filters(&self, addr: Address) -> bool {
+        if let Some(base_address) = self.base_address {
+            if addr < base_address {
+                return false;
+            }
+        }
+
+        true
     }
 
     pub fn get_count(&self) -> usize {
@@ -147,17 +171,30 @@ impl<'a> PageIterator<'a> {
             //current_region = i;
             let region = self.mmap.get_memory_region(i).unwrap();
 
+            if let Some(region_type) = self.region_type {
+                if region.get_type() != region_type {
+                    continue;
+                }
+            }
+
             let (start, end) = region.get_address_range();
             let mut current = match start_page {
                 Some(sp) => { start_page = None; sp },
                 None => start,
             };
+        
+            // if a base address was specified, skip past any regions before it
+            if let Some(base_address) = self.base_address {
+                if end < base_address {
+                    continue;
+                }
+            }
 
             while current < end  && current + PAGE_SIZE_4KB as Address <= end {
                 // skip past any 1gb pages
                 while is_1gb_page(current) && next_1gb_page(current) <= end {
                     let next = next_1gb_page(current);
-                    if self.page_size == PAGE_SIZE_1GB as Address {
+                    if self.page_size == PAGE_SIZE_1GB as Address && self.passes_filters(current) {
                         //println!("  Returning 0x{:x}", current);
                         return (i, next, Some(current));
                     }
@@ -172,7 +209,7 @@ impl<'a> PageIterator<'a> {
                     }
 
                     let next = next_2mb_page(current);
-                    if self.page_size == PAGE_SIZE_2MB as Address {
+                    if self.page_size == PAGE_SIZE_2MB as Address && self.passes_filters(current) {
                         //println!("  Returning 0x{:x}", current);
                         return (i, next, Some(current));
                     }
@@ -185,7 +222,7 @@ impl<'a> PageIterator<'a> {
                     }
 
                     let next = next_4kb_page(current);
-                    if self.page_size == PAGE_SIZE_4KB as Address {
+                    if self.page_size == PAGE_SIZE_4KB as Address && self.passes_filters(current){
                         //println!("  Returning 0x{:x}", current);
                         return (i, next, Some(current));
                     }
@@ -304,12 +341,15 @@ impl<'a> Pager<'a> {
         where T : SimpleStack<Address> + Index<usize>,
               F : FnMut() -> Option< Address > {
 
+        // TODO: this doeesn't seem to be returning the base of the stack, it's returning the top!?
+        // Confirm what's going on here.
         let stack_base_address = (ptr::addr_of!(stack[0]) as *const Address) as Address;
         let pages_count = pages.get_count();
         let required_stack_size_in_pages = pages_required(pages_count * size_of::<Address>());
-        println!("Page stack contains {} pages, consuming {} pages for the stack", pages_count, required_stack_size_in_pages);        
+        println!("Page stack contains {} addresses, consuming {} pages for the stack structure", pages_count, required_stack_size_in_pages);        
 
         for i in 0..required_stack_size_in_pages {
+            println!("Mapping page {}", i);
             self._map_physical_to_virtual(
                 PhysicalAddress((new_page)().expect("Unable to map page stack")), 
                 VirtualAddress(stack_base_address + (i*PAGE_SIZE_4KB) as Address),
@@ -353,46 +393,31 @@ impl<'a> Pager<'a> {
         let size_1gb = PAGE_SIZE_1GB as Address;
         let size_2mb = PAGE_SIZE_2MB as Address;
 
+        // need to be kernel physical address...
+        // need to update the base address as this iterates...
+        let mut page_table_allocator = PageIterator::new(&mmap, PAGE_SIZE_4KB)
+                .with_region_type(MemoryRegionType::Available)
+                .with_base_address(required_base);
+
         let mut page_allocator = || {
-            for i in 0..num_regions {
-                let region = mmap.get_memory_region(i).unwrap();
-
-                let (start, end) = region.get_address_range();
-                let mut current = start;
-
-                while current < end /*&& pages_found != total_pages_required */{
-                    // skip past any 1gb pages
-                    while current & mask_1gb == 0 && (current + size_1gb) < end {
-                        current += size_1gb;
-                    }
-
-                    // skip past any 2mb pages
-                    while current & mask_2mb == 0 && (current + size_2mb) < end {
-                        current += size_2mb;
-                    }
-
-                    // now select 4kb pages until we hit a 2mb aligned page (note that 1gb is also 2mb aligned)
-                    loop {
-                        current += 4096;
-                        if current > required_base {
-                            //write!(serial, "region {:3} page {:4} -> 0x{:016x}\n", i, pages_found+1, current);
-                            //pages_found += 1;
-                            required_base = current;
-                            return Some(current);
-                        }
-
-                        if current & mask_2mb == 0 || current >= end /*|| pages_found == total_pages_required*/ {
-                            break;
-                        }
-                    } 
-                }
-            }
-            None
+            page_table_allocator.next()
         };
 
-        self.populate_page_stack(&mut self.stack_1gb.stacks.lock().allocated_pages, PageIterator::new(&mmap, PAGE_SIZE_1GB), &mut page_allocator);
-        self.populate_page_stack(&mut self.stack_2mb.stacks.lock().allocated_pages, PageIterator::new(&mmap, PAGE_SIZE_2MB), &mut page_allocator);
-        self.populate_page_stack(&mut self.stack_4kb.stacks.lock().allocated_pages, PageIterator::new(&mmap, PAGE_SIZE_4KB), &mut page_allocator);
+        self.populate_page_stack(
+            &mut self.stack_1gb.stacks.lock().available_pages, 
+            PageIterator::new(&mmap, PAGE_SIZE_1GB)
+                .with_region_type(MemoryRegionType::Available), 
+            &mut page_allocator);
+        self.populate_page_stack(
+            &mut self.stack_2mb.stacks.lock().available_pages, 
+            PageIterator::new(&mmap, PAGE_SIZE_2MB)
+                .with_region_type(MemoryRegionType::Available), 
+            &mut page_allocator);
+        self.populate_page_stack(
+            &mut self.stack_4kb.stacks.lock().available_pages, 
+            PageIterator::new(&mmap, PAGE_SIZE_4KB)
+                .with_region_type(MemoryRegionType::Available), 
+            &mut page_allocator);
 
         // now that all of this in place, we can explicitly allocate the allocated pages 
         // the the page stack itself will ensure the structure is properly mapped 
