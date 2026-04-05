@@ -110,6 +110,7 @@ struct PageIterator<'a> {
     current_page: Option<Address>,
     region_type: Option<MemoryRegionType>,
     base_address: Option<Address>,
+    exclude_page_range: Option< (Address, Address) >
 }
 
 impl<'a> PageIterator<'a> {
@@ -121,6 +122,7 @@ impl<'a> PageIterator<'a> {
             current_page: None,
             region_type: None,
             base_address: None,
+            exclude_page_range: None,
         }
     }
 
@@ -134,9 +136,20 @@ impl<'a> PageIterator<'a> {
         self
     }
 
+    pub fn excluding_range(mut self, start: Address, end: Address) -> Self {
+        self.exclude_page_range = Some((start, end));
+        self
+    }
+
     fn passes_filters(&self, addr: Address) -> bool {
         if let Some(base_address) = self.base_address {
             if addr < base_address {
+                return false;
+            }
+        }
+
+        if let Some(exclude_page_range) = self.exclude_page_range {
+            if addr >= exclude_page_range.0 && addr < exclude_page_range.1 {
                 return false;
             }
         }
@@ -159,6 +172,10 @@ impl<'a> PageIterator<'a> {
             current_page = Some(page);
         }
         count
+    }
+
+    pub fn get_current(&self) -> Option<Address> {
+        self.current_page
     }
 
     fn iterate(&self, current_region: usize, start_page: Option<Address>) -> (usize, Address, Option<Address>) {
@@ -337,7 +354,7 @@ impl<'a> Pager<'a> {
     // might need to template this function?
     // PageIterator could be a trait, or a concrete class with different data?
     // TODO: this only works for expand up stacks...
-    fn populate_page_stack<T, F>(&self, stack: &mut T, pages: PageIterator, new_page: &mut F) 
+    fn create_page_stack<T, F>(&self, stack: &mut T, pages: PageIterator, new_page: &mut F) 
         where T : SimpleStack<Address> + Index<usize>,
               F : FnMut() -> Option< Address > {
 
@@ -365,6 +382,11 @@ impl<'a> Pager<'a> {
                 }
             ).expect("Unable to map");
         }
+    }
+
+    fn populate_page_stack<T>(&self, stack: &mut T, pages: PageIterator) 
+        where T : SimpleStack<Address> + Index<usize> {
+        println!("Populating stack with pages...");
         for page in pages {
             stack.push(page);
         }
@@ -374,8 +396,8 @@ impl<'a> Pager<'a> {
         let module_list = ModuleList::from_page(config.get_module_list_address());
         let mmap = MemoryMap::from_page(config.get_memory_map_address());
 
-        // TODO: implementing a custom copy trait must allow this to be moved into the `new` call
-        // we don't really want to allow a 'copy' per-se, as there should only ever be one pager, 
+        // NOTE: implementing a custom copy trait might allow this to be moved into the `new` call
+        // but we don't really want to allow a 'copy' per-se, as there should only ever be one pager, 
         // but in order to return the pager, it must be moved from the stack to the caller's 
         // stack which implies a copy and drop, which can't be done if the page stack's contain 
         // these references...
@@ -387,14 +409,16 @@ impl<'a> Pager<'a> {
         let kernel_physical_start = kernel_load_info.get_start_address();
         let kernel_size = kernel_load_info.get_size();
         let mut required_base = kernel_physical_start + kernel_size as Address;
-        // TODO: make const/global
-        let mask_1gb = (PAGE_SIZE_1GB-1) as Address;
-        let mask_2mb = (PAGE_SIZE_2MB-1) as Address;
-        let size_1gb = PAGE_SIZE_1GB as Address;
-        let size_2mb = PAGE_SIZE_2MB as Address;
 
-        // need to be kernel physical address...
-        // need to update the base address as this iterates...
+        // This page allocator is provided to `create_page_stack` as a source for 4kb pages whenever to 
+        // pager needs to create a new page table.  
+        // Later on, when we create the 4kb page stack, we'll exclude the pages which were returned 
+        // from this stack.
+        // Note that we also tell the iterator to pick pages from after the kernel as the act of allocating 
+        // it has already broken up some 2mb and a 1gb page, so we prefer to not break up any more.
+        // NOTE: no provision has been made to ensure that the page stack actually has enough 4kb pages 
+        // for this task... at some point I'll need to allow for 2mb pages to be consumed for this 
+        // purpose iff 4kb pages run out.
         let mut page_table_allocator = PageIterator::new(&mmap, PAGE_SIZE_4KB)
                 .with_region_type(MemoryRegionType::Available)
                 .with_base_address(required_base);
@@ -403,21 +427,47 @@ impl<'a> Pager<'a> {
             page_table_allocator.next()
         };
 
-        self.populate_page_stack(
+        // TODO: break this up into steps to map the pages in to create the stacks, 
+        // and then to push the pages to the stacks, as the former will consume pages which we don't want to push onto the stacks,
+        // so we want to know which ones have been consumed before populating the 4kb stack (which is where the page table allocator 
+        // is getting pages from) and we can add an exclusion range to that page iterator
+        println!("Creating 1GB page stack");
+        self.create_page_stack(
             &mut self.stack_1gb.stacks.lock().available_pages, 
             PageIterator::new(&mmap, PAGE_SIZE_1GB)
                 .with_region_type(MemoryRegionType::Available), 
             &mut page_allocator);
-        self.populate_page_stack(
+        println!("Creating 2MB page stack");
+        self.create_page_stack(
             &mut self.stack_2mb.stacks.lock().available_pages, 
             PageIterator::new(&mmap, PAGE_SIZE_2MB)
                 .with_region_type(MemoryRegionType::Available), 
             &mut page_allocator);
-        self.populate_page_stack(
+        println!("Creating 4KB page stack");
+        self.create_page_stack(
             &mut self.stack_4kb.stacks.lock().available_pages, 
             PageIterator::new(&mmap, PAGE_SIZE_4KB)
                 .with_region_type(MemoryRegionType::Available), 
             &mut page_allocator);
+
+        self.populate_page_stack(
+            &mut self.stack_1gb.stacks.lock().available_pages, 
+            PageIterator::new(&mmap, PAGE_SIZE_1GB)
+                .with_region_type(MemoryRegionType::Available));
+        self.populate_page_stack(
+            &mut self.stack_2mb.stacks.lock().available_pages, 
+            PageIterator::new(&mmap, PAGE_SIZE_2MB)
+                .with_region_type(MemoryRegionType::Available));
+        // The act of creating the page stacks will have consumed some of the available 4kb pages, so we need to
+        // exclude those from the page iterator we use to populate the 4kb stack, otherwise we'll end up pushing 
+        // pages onto the stack which could be in ues as page tables/dircetories, or mapped in to the page stack itself.
+        self.populate_page_stack(
+            &mut self.stack_4kb.stacks.lock().available_pages, 
+            PageIterator::new(&mmap, PAGE_SIZE_4KB)
+                .with_region_type(MemoryRegionType::Available)
+                .excluding_range(
+                    required_base, 
+                    page_table_allocator.get_current().unwrap_or(required_base)));
 
         // now that all of this in place, we can explicitly allocate the allocated pages 
         // the the page stack itself will ensure the structure is properly mapped 
