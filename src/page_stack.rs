@@ -66,8 +66,6 @@ use mockall::predicate::*;
 use crate::stack::{Stack, SimpleStack, EXPAND_UP, EXPAND_DOWN};
 use crate::types::Address;
 
-use core::ptr;
-
 use spin::Mutex;
 
 // These traits must use interior mutability to accomplish their goals, as the 
@@ -162,7 +160,7 @@ impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageStack<'a, MAPPER, PAGE_
 
                     // TODO: if this calls into the pager, it could allocate new 4kb pages, which could be 
                     // calling back into this very same page stack (creating a dead lock?  Depends on whether spinlock is recursive)
-                    self.mapper.ensure_mapped(top_of_stack, new_top);
+                    self.mapper.ensure_mapped(top_of_stack, new_top).unwrap();
 
                     for i in 0..num_pages {
                         stacks.available_pages.push(page_addr + (i * PAGE_SIZE) as Address);

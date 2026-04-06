@@ -48,7 +48,7 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
         Stack { 
             base: unsafe { core::slice::from_raw_parts_mut(base as *mut T, size) }, 
             size, 
-            pointer: match(STACK_TYPE) {
+            pointer: match STACK_TYPE {
                 EXPAND_UP => 0,
                 EXPAND_DOWN => size,
             }
@@ -56,7 +56,7 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
     }
 
     fn direction(&self) -> isize {
-        match(STACK_TYPE) {
+        match STACK_TYPE {
             EXPAND_UP => 1,
             EXPAND_DOWN => -1,
         }
@@ -64,7 +64,7 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
 
     pub fn base(&self) -> Address {
         (
-            match(STACK_TYPE) {
+            match STACK_TYPE {
                 EXPAND_UP => self.base.as_ptr() as usize,
                 EXPAND_DOWN => self.base.as_ptr() as usize + (self.size * core::mem::size_of::<T>()),
             }
@@ -73,7 +73,7 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
 
     pub fn top(&self) -> Address {
         (
-           match(STACK_TYPE) {
+           match STACK_TYPE {
                 EXPAND_UP => self.base() as usize + (self.len() * core::mem::size_of::<T>()),
                 EXPAND_DOWN => self.base() as usize - (self.len() * core::mem::size_of::<T>()),
             }

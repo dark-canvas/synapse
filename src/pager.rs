@@ -27,16 +27,15 @@ use x86_64::structures::paging::Size4KiB;
 use x86_64::structures::paging::PhysFrame;
 use x86_64::structures::paging::PageTable;
 use x86_64::structures::paging::PageTableFlags;
-use x86_64::structures::paging::page_table::PageTableEntry;
 use x86_64::PhysAddr;
 
 use satus_struct::config::Config;
 use satus_struct::module_list::ModuleList;
-use satus_struct::memory_map::{MemoryMap, MemoryRegion, MemoryRegionType};
+use satus_struct::memory_map::{MemoryMap, MemoryRegionType};
 
 use crate::types::Address;
-use crate::stack::{Stack, SimpleStack, EXPAND_UP, EXPAND_DOWN};
-use crate::page_stack::{PageStack, PageBorrower, PageMapper};
+use crate::stack::SimpleStack;
+use crate::page_stack::{PageStack, PageMapper};
 
 //use log::info;
 
@@ -77,15 +76,15 @@ type CreatePageTable = fn() -> Result< PhysFrame::<Size4KiB>, &'static str>;
 // TODO: these are now "is_x_page_aligned" functions
 // TODO: add actual is_x_page function
 fn is_1gb_page(addr: Address) -> bool {
-    (addr & PAGE_MASK_1GB == 0)
+    addr & PAGE_MASK_1GB == 0
 }
 
 fn is_2mb_page(addr: Address) -> bool {
-    (addr & PAGE_MASK_2MB == 0) //&& !is_1gb_page(addr)
+    addr & PAGE_MASK_2MB == 0 //&& !is_1gb_page(addr)
 }
 
 fn is_4kb_page(addr: Address) -> bool {
-    (addr & PAGE_MASK_4KB == 0) //&& !is_2mb_page(addr) && !is_1gb_page(addr)
+    addr & PAGE_MASK_4KB == 0 //&& !is_2mb_page(addr) && !is_1gb_page(addr)
 }
 
 fn next_1gb_page(addr: Address) -> Address {
@@ -408,7 +407,7 @@ impl<'a> Pager<'a> {
         let kernel_load_info = module_list.get_module_info(0).unwrap();
         let kernel_physical_start = kernel_load_info.get_start_address();
         let kernel_size = kernel_load_info.get_size();
-        let mut required_base = kernel_physical_start + kernel_size as Address;
+        let required_base = kernel_physical_start + kernel_size as Address;
 
         // This page allocator is provided to `create_page_stack` as a source for 4kb pages whenever to 
         // pager needs to create a new page table.  
@@ -521,7 +520,6 @@ impl<'a> Pager<'a> {
 
         unsafe {
             let (pl4_frame, _flags) = Cr3::read();
-            let pl4_addr: PhysAddr = pl4_frame.start_address();
             let pl4_table = & *(pl4_frame.start_address().as_u64() as *const PageTable);
 
             let pl4_entry = &pl4_table[pl4_index];
@@ -598,7 +596,6 @@ impl<'a> Pager<'a> {
 
         unsafe {
             let (pl4_frame, _flags) = Cr3::read();
-            let pl4_addr: PhysAddr = pl4_frame.start_address();
             let pl4_table = &mut *(pl4_frame.start_address().as_u64() as *mut PageTable);
 
             let pl4_entry = &mut pl4_table[pl4_index];
@@ -639,7 +636,6 @@ impl<'a> Pager<'a> {
     pub fn output_mmap(&self) {
         unsafe {
             let (pl4_frame, _flags) = Cr3::read();
-            let pl4_addr: PhysAddr = pl4_frame.start_address();
             let pl4_table = & *(pl4_frame.start_address().as_u64() as *const PageTable);
 
             for (i, entry) in pl4_table.iter().enumerate() {
