@@ -63,6 +63,7 @@ use mockall::*;
 #[cfg(test)]
 use mockall::predicate::*;
 
+use core::ptr;
 use crate::stack::{Stack, SimpleStack, EXPAND_UP, EXPAND_DOWN};
 use crate::types::Address;
 

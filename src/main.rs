@@ -60,7 +60,6 @@ pub extern "C" fn _start() -> ! {
         );
     }
 
-    let mut serial = logger::SerialPort{};
     println!("Starting Synapse...");
 
     let config = Config::from_page(config_addr);
