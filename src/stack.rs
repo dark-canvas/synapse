@@ -26,9 +26,16 @@
 //! many of the brances and conditional can be optimized or compiled out entirely.
 
 use crate::types::Address;
+//use core::cmp::PartialEq
+use core::ops::Index; 
 
-pub const ExpandUp: bool = true;
-pub const ExpandDown: bool = false;
+pub const EXPAND_UP: bool = true;
+pub const EXPAND_DOWN: bool = false;
+
+pub trait SimpleStack<T> {
+    fn push(&mut self, value: T);
+    fn pop(&mut self) -> Option<T>;
+}
 
 pub struct Stack<'a, T, const STACK_TYPE: bool> where T: Clone + Copy {
     size: usize,
@@ -36,39 +43,39 @@ pub struct Stack<'a, T, const STACK_TYPE: bool> where T: Clone + Copy {
     pointer: usize,
 }
 
-impl<'a, T: Clone + Copy, const STACK_TYPE: bool> Stack<'a, T, STACK_TYPE> {
-    pub fn new(base: usize, size: usize) -> Stack<'static, T, STACK_TYPE> {
+impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK_TYPE> {
+    pub fn new(base: Address, size: usize) -> Stack<'static, T, STACK_TYPE> {
         Stack { 
             base: unsafe { core::slice::from_raw_parts_mut(base as *mut T, size) }, 
             size, 
-            pointer: match(STACK_TYPE) {
-                ExpandUp => 0,
-                ExpandDown => size,
+            pointer: match STACK_TYPE {
+                EXPAND_UP => 0,
+                EXPAND_DOWN => size,
             }
         }
     }
 
     fn direction(&self) -> isize {
-        match(STACK_TYPE) {
-            ExpandUp => 1,
-            ExpandDown => -1,
+        match STACK_TYPE {
+            EXPAND_UP => 1,
+            EXPAND_DOWN => -1,
         }
     }
 
     pub fn base(&self) -> Address {
         (
-            match(STACK_TYPE) {
-                ExpandUp => self.base.as_ptr() as usize,
-                ExpandDown => self.base.as_ptr() as usize + (self.size * core::mem::size_of::<T>()),
+            match STACK_TYPE {
+                EXPAND_UP => self.base.as_ptr() as usize,
+                EXPAND_DOWN => self.base.as_ptr() as usize + (self.size * core::mem::size_of::<T>()),
             }
         ) as Address
     }
 
     pub fn top(&self) -> Address {
         (
-           match(STACK_TYPE) {
-                ExpandUp => self.base() as usize + (self.len() * core::mem::size_of::<T>()),
-                ExpandDown => self.base() as usize - (self.len() * core::mem::size_of::<T>()),
+           match STACK_TYPE {
+                EXPAND_UP => self.base() as usize + (self.len() * core::mem::size_of::<T>()),
+                EXPAND_DOWN => self.base() as usize - (self.len() * core::mem::size_of::<T>()),
             }
         ) as Address
     }
@@ -79,22 +86,22 @@ impl<'a, T: Clone + Copy, const STACK_TYPE: bool> Stack<'a, T, STACK_TYPE> {
 
     pub fn is_empty(&self) -> bool {
         match STACK_TYPE {
-            ExpandUp => self.pointer == 0,
-            ExpandDown => self.pointer == self.size,
+            EXPAND_UP => self.pointer == 0,
+            EXPAND_DOWN => self.pointer == self.size,
         }
     }
 
     pub fn is_full(&self) -> bool {
         match STACK_TYPE {
-            ExpandUp => self.pointer >= self.size,
-            ExpandDown => self.pointer == 0,
+            EXPAND_UP => self.pointer >= self.size,
+            EXPAND_DOWN => self.pointer == 0,
         }
     }
 
     pub fn len(&self) -> usize {
         match STACK_TYPE {
-            ExpandUp => self.pointer,
-            ExpandDown => self.size - self.pointer,
+            EXPAND_UP => self.pointer,
+            EXPAND_DOWN => self.size - self.pointer,
         }
     }
 
@@ -106,29 +113,63 @@ impl<'a, T: Clone + Copy, const STACK_TYPE: bool> Stack<'a, T, STACK_TYPE> {
         self.capacity() - self.len()
     }
 
-    pub fn push(&mut self, value: T) {
+    /// Expensive; performs a linear search
+    /// Could be made faster if the data was kept sorted, but given that this is (currently) only 
+    /// used to construct the page stacks initially, it's probably not horrible.
+    pub fn find(&self, value: T) -> Option<usize> {
+        let (start, end) = match STACK_TYPE {
+            EXPAND_UP => (0, self.pointer),
+            EXPAND_DOWN => (self.pointer, self.size)
+        };
+
+        for i in start..end {
+            if self.base[i] == value {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    pub fn remove_index(&mut self, index: usize) {
+        // TODO: assert index validity?
+        // swap the last item with this one
+        if let Some(last) = self.pop() {
+            self.base[index] = last;
+        }
+    }
+}
+
+impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> SimpleStack<T> for  Stack<'a, T, STACK_TYPE> {
+    fn push(&mut self, value: T) {
         if self.is_full() {
             panic!("Stack overflow");
         }
         
         match STACK_TYPE {
-            ExpandUp => {
+            EXPAND_UP => {
                 self.base[self.pointer] = value;
                 self.pointer += 1;
             },
-            ExpandDown => {
+            EXPAND_DOWN => {
                 self.pointer -= 1;
                 self.base[self.pointer] = value;
             }
         }
     }
 
-    pub fn pop(&mut self) -> Option<T> {
+    fn pop(&mut self) -> Option<T> {
         if self.is_empty() {
             return None;
         }
         self.pointer -= self.direction() as usize;
         Some(self.base[self.pointer])
+    }
+}
+
+impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Index<usize> for  Stack<'a, T, STACK_TYPE> {
+    type Output = T;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.base[index]
     }
 }
 
@@ -138,7 +179,7 @@ mod tests {
 
     #[test]
     fn test_create_stack() {
-        let stack = Stack::<usize, ExpandUp>::new(0x1000, 10);
+        let stack = Stack::<usize, EXPAND_UP>::new(0x1000, 10);
 
         assert_eq!(stack.size, 10);
         assert_eq!(stack.len(), 0);
@@ -152,7 +193,7 @@ mod tests {
     #[test]
     fn test_expand_up_push() {
         let stack_data = [0usize; 10];
-        let mut stack = Stack::<usize, ExpandUp>::new(stack_data.as_ptr() as usize, 10);
+        let mut stack = Stack::<usize, EXPAND_UP>::new(stack_data.as_ptr() as Address, 10);
         stack.push(0x12345678);
         stack.push(0x9abcdef0);
         assert_eq!(stack.base[0], 0x12345678);
@@ -168,7 +209,7 @@ mod tests {
     #[test]
     fn test_expand_down_push() {
         let stack_data = [0usize; 10];
-        let mut stack = Stack::<usize, ExpandDown>::new(stack_data.as_ptr() as usize, 10);
+        let mut stack = Stack::<usize, EXPAND_DOWN>::new(stack_data.as_ptr() as Address, 10);
         stack.push(0x12345678);
         stack.push(0x9abcdef0);
         assert_eq!(stack.base[9], 0x12345678);

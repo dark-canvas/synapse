@@ -15,3 +15,30 @@ impl Write for SerialPort {
         Ok(())
     }
 }
+
+
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => ($crate::logger::_print(format_args!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! println {
+    () => ($crate::print!("\n"));
+    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+}
+
+#[cfg(not(test))]
+#[doc(hidden)]
+pub fn _print(args: fmt::Arguments) {
+    use core::fmt::Write;
+    let mut serial_port = SerialPort {};
+    serial_port.write_fmt(args).unwrap();
+}
+
+#[cfg(test)]
+#[doc(hidden)]
+pub fn _print(args: fmt::Arguments) {
+    // Nothing for now...
+}
