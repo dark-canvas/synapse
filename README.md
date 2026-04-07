@@ -1,8 +1,13 @@
-# Synergy
+# Synapse
 
 ## Introduction
 
-A rust based microkernel designed.
+A rust based operating system using a microkernel design.
+The kernel relies on satus (which is a UEFI bootloader written in rust) to load the kernel and also, 
+optionally, a set of kernel modules.
+The modules can take ownership of some hardware elements, and/or install themeslves into a service tree 
+and provide services for applications or other modules.
+
 
 ## Build Environment
 

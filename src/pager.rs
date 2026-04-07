@@ -18,7 +18,9 @@
 //!   - 0xFFFFFFD000000000 - 0xFFFFFFE000000000 -> 4kb page stack
 //!   - 0xFFFFFFE000000000 - 0xFFFFFFE000200000 -> 2mb page stack
 //!   - 0xFFFFFFE000200000 - 0xFFFFFFE000201000 -> 1gb page stack
-
+//!
+//! TODO: add a global define for the amount of physical memory defined and create 
+//! asserts for if/when the platform has more (i.e., we can't fully support it)
 use core::ops::Index; 
 use core::ptr;
 
@@ -99,9 +101,9 @@ fn next_4kb_page(addr: Address) -> Address {
     (addr + PAGE_SIZE_4KB as Address) & !PAGE_MASK_4KB
 }
 
-// TODO: need an implementation of this for getting 4kb, 2mb and 1gb available pages 
-// from the mmap structure
-// Remember to remove the pages which we consumed trying to map the page stacks
+/// A struct that can be used to iterate over an mmap and return memory in its largest possible page sizes, 
+/// while also allowing for filtering by region type and base address, and excluding specific page ranges 
+/// (e.g., for the page stack itself)
 struct PageIterator<'a> {
     mmap: &'a MemoryMap,
     page_size: Address,
@@ -244,28 +246,6 @@ impl<'a> PageIterator<'a> {
                     }
                     current = next;
                 }
-
-
-                // TODO: Can this be made the same as the above style loops?
-                // If so... can it be a macro, or a templated function?
-                // now select 4kb pages until we hit a 2mb aligned page (note that 1gb is also 2mb aligned)
-                /*
-                loop {
-                    let next = current + PAGE_SIZE_4KB as Address;
-
-                    if self.page_size == PAGE_SIZE_4KB as Address && next <= end {
-                        println!("  Returning {}", current);
-                        return (i, next, Some(current));
-                    }
-
-                    current = next;
-
-                    // if we hit a 2mb aligned page, break out of the loop to see if it's a full 2mb page
-                    if current & PAGE_MASK_2MB == 0 || current >= end {
-                        break;
-                    }
-
-                }*/
             }
         }
         //println!("  Returning None");
@@ -297,8 +277,6 @@ impl PageMapper for StubMapper {
 }
 
 pub struct Pager<'a> {
-    //pl4_table: &'static mut PageTable,
-
     /// Must return a zero'd out 4kb physical page address
     //create_page_table: GetPhysicalPage,
 
@@ -494,23 +472,21 @@ impl<'a> Pager<'a> {
         // After this is all setup, then physical memory can be identity mapped to PHYSICAL_OFFSET
     }
 
-    /*
-    pub fn alloc_page(&mut self, page_type: PageType) -> Opl1ion<usize> {
+    pub fn alloc_page(&mut self, page_type: PageType) -> Option<Address> {
         match page_type {
-            PageType::Page4K => self.page_stack_4kb.pop(),
-            PageType::Page2M => None, // TODO: implement
-            PageType::Page1G => None, // TODO: implement
+            PageType::Page4K => self.stack_4kb.allocate_page(),
+            PageType::Page2M => self.stack_2mb.allocate_page(),
+            PageType::Page1G => self.stack_1gb.allocate_page(),
         }
     }
 
-    pub fn free_page(&mut self, page_type: PageType, page_number: usize) {
+    pub fn free_page(&mut self, page_type: PageType, address: Address) {
         match page_type {
-            PageType::Page4K => self.page_stack_4kb.push(page_number),
-            PageType::Page2M => (), // TODO: implement
-            PageType::Page1G => (), // TODO: implement
+            PageType::Page4K => self.stack_4kb.deallocate_page(address),
+            PageType::Page2M => self.stack_2mb.deallocate_page(address),
+            PageType::Page1G => self.stack_1gb.deallocate_page(address),
         }
     }
-    */
 
     pub fn virtual_to_physical(&self, virtual_addr: usize) -> Option<usize> {
         let pl4_index = (virtual_addr >> 39) & 0o777;

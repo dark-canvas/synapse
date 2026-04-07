@@ -86,12 +86,8 @@ pub trait PageBorrower {
 
 #[cfg_attr(test, automock)]
 pub trait PageMapper {
-    //fn map_page(&mut self, page_addr: Address) -> bool;
-    //fn unmap_page(&mut self, page_addr: Address) -> bool;
-
-    // or something like?
-    // Ok(b) -> address is mapped, b == true means the page was mapped, otherwise it was already mapped
-    // Err -> couldn't map the page..
+    /// Ok(b) -> address is mapped, b == true means the page was mapped, otherwise it was already mapped
+    /// Err -> couldn't map the page..
     fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,()>;
 }
 
@@ -121,11 +117,12 @@ pub struct PageStack<'a, MAPPER: PageMapper, const PAGE_SIZE: usize > {
     // Do we even need to track allocated pages?  If available pages is kept sorted (which could be a requirement to 
     // return larger pages to larger pack stacks) then determining double frees is just a matter of ensuring it isn't 
     // already in the available stack.
+    // Also keeping available pages sorted allows for merging of adjacent pages into larger pages when they are returned to the stack.
     // Ultimately, determining/preventing double frees should actually be on the programmer, not the OS... it *SHOULD* 
     // be preventable without additionala support from the OS.
     // wrap the whole thing in a mutex?
     pub /* TODO (in crate::pager)*/ stacks: Mutex< Stacks >,
-    borrower: Option<&'a dyn PageBorrower>,  // &dyn Trait?
+    borrower: Option<&'a dyn PageBorrower>,
     mapper: MAPPER, // if this calls into the pager, then it could call back into the 4kb allocator, so must be done *outside* of the lock
 }
 
@@ -207,20 +204,26 @@ impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageStack<'a, MAPPER, PAGE_
         None
     }
 
-    pub fn deallocate_page(&mut self, page_addr: Address) -> Option<Address> {
+    pub fn deallocate_page(&mut self, page_addr: Address) {
         // TODO: page align the address
         // TODO: confirm it was actually allocated
         let mut stacks_lock = self.stacks.lock();
         let stacks = &mut stacks_lock;
 
         if stacks.allocated_pages.is_empty() {
-            return None; // No pages to deallocate
+            // TODO: should this return an error?
+            return; // No pages to deallocate
         }
 
         // TODO: this isn't correct
-        let page_addr = stacks.allocated_pages.pop().unwrap();
-        stacks.available_pages.push(page_addr);
-        Some(page_addr)
+        // find page in allocate stack
+        // swap it with the top of the stack
+        // decrement the stack size
+
+        panic!("deallocate_page not implemented yet");
+        //let page_addr = stacks.allocated_pages.pop().unwrap();
+        //stacks.available_pages.push(page_addr);
+        //Some(page_addr)
     }
 }
 

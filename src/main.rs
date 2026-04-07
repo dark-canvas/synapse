@@ -89,5 +89,19 @@ pub extern "C" fn _start() -> ! {
             *framebuffer.add(i) = 0xFF;
         }
     }
+
+    // Need to find a way to make this work.... this complains that a second mutable borrow is occuring here, 
+    // because (I believe) the `configure` call above creates references in the pager to itself and so 
+    // creates a mutable borrow that is still active (active for the lifetime of the pager)
+    
+    //pager.alloc_page(pager::PageType::Page4K);
+
+    let framebuffer = config.get_framebuffer_address() as *mut u8;
+    for i in 0..(config.get_framebuffer_size() as usize) {
+        unsafe {
+            *framebuffer.add(i) = 0x80;
+        }
+    }
+
     loop {}
 }
