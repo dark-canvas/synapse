@@ -132,10 +132,33 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
 
     pub fn remove_index(&mut self, index: usize) {
         // TODO: assert index validity?
+        // TODO: return the item removed?
         // swap the last item with this one
         if let Some(last) = self.pop() {
             self.base[index] = last;
         }
+    }
+
+    // TODO: determine what this index should mean based on expand up/down direction
+    // And write UTs which enforce it
+    pub fn get(&self, index: usize) -> Option<T> {
+        let (start, end) = match STACK_TYPE {
+            EXPAND_UP => (0, self.pointer),
+            EXPAND_DOWN => (self.pointer, self.size)
+        };
+
+        if index >= start && index < end {
+            Some(self.base[index])
+        } else {
+            None
+        }
+    }
+
+    // TODO: assert validity of both indices?
+    pub fn swap(&mut self, index1: usize, index2: usize) {
+        let temp = self.base[index1];
+        self.base[index1] = self.base[index2];
+        self.base[index2] = temp;
     }
 }
 
