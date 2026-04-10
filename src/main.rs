@@ -1,4 +1,5 @@
 #![no_std]
+#![feature(generic_const_exprs)]
 #![cfg_attr(not(test), no_main)]
 
 #[cfg(test)]
@@ -28,7 +29,8 @@ const KERNEL_START: u64 = 0xFFFFFF8000000000;
 
 #[cfg(not(test))]
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
+    println!("Panic: {}", info);
     loop {}
 }
 
@@ -94,7 +96,7 @@ pub extern "C" fn _start() -> ! {
     // because (I believe) the `configure` call above creates references in the pager to itself and so 
     // creates a mutable borrow that is still active (active for the lifetime of the pager)
     
-    //pager.alloc_page(pager::PageType::Page4K);
+    pager.allocate_page(pager::PageType::Page4K);
 
     let framebuffer = config.get_framebuffer_address() as *mut u8;
     for i in 0..(config.get_framebuffer_size() as usize) {

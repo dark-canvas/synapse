@@ -272,27 +272,43 @@ struct StubMapper {}
 
 impl PageMapper for StubMapper {
     fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,()> {
+        panic!("ensure_mapped not implemented");
         Err(())
     }
 }
 
-pub struct Pager<'a> {
+pub struct Pager {
     /// Must return a zero'd out 4kb physical page address
     //create_page_table: GetPhysicalPage,
 
     // TODO: how to represent the borrower and mapper here, as they will have to have a reference to the pager, but 
     // the pager hasn't yet been created...
-    stack_1gb: PageStack::<'a, StubMapper, PAGE_SIZE_1GB>,
-    stack_2mb: PageStack::<'a, StubMapper, PAGE_SIZE_2MB>,
-    stack_4kb: PageStack::<'a, StubMapper, PAGE_SIZE_4KB>,
+    stack_1gb: PageStack::<PAGE_SIZE_1GB>,
+    stack_2mb: PageStack::<PAGE_SIZE_2MB>,
+    stack_4kb: PageStack::<PAGE_SIZE_4KB>,
 }
 
 // TODO: probably doesn't need to be public
 pub fn pages_required(size: usize) -> usize {
     (size + (PAGE_SIZE_4KB - 1)) / PAGE_SIZE_4KB
 }
-    
-impl<'a> Pager<'a> {
+
+impl PageMapper for Pager {
+    // TODO: Is this the right way to go?
+    // This creates a bit of a weird stack...
+    // - allocate a page (general purpose heap alloc)
+    //   - call into page stack allocator
+    //     - ensure mapped gets called to ensure the stack is the right size
+    //       - ensure mapped needs to allocate a page
+    //         - gets page from the page stack, which then calls ensure_mapped
+    //
+    // I think this means we need to ensure the pages *before* trying to acquire a page
+    fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,()> {
+        Err(())
+    } 
+}
+
+impl Pager {
     /// Returns an instance of Pager with any non-specific configuration done.
     /// System-specific configuration must be performed first (via the configure method)
     /// before this pager can actually be used.
@@ -321,9 +337,9 @@ impl<'a> Pager<'a> {
 
             Pager { 
                 //pl4_table: pl4_table,  // Make this an address instead?
-                stack_1gb: PageStack::<_, PAGE_SIZE_1GB>::new(mapper.clone(), PAGE_STACK_1GB_BASE, PAGE_STACK_1GB_MAX_PAGES),
-                stack_2mb: PageStack::<_, PAGE_SIZE_2MB>::new(mapper.clone(), PAGE_STACK_2MB_BASE, PAGE_STACK_2MB_MAX_PAGES),
-                stack_4kb: PageStack::<_, PAGE_SIZE_4KB>::new(mapper.clone(), PAGE_STACK_4KB_BASE, PAGE_STACK_4KB_MAX_PAGES),
+                stack_1gb: PageStack::<PAGE_SIZE_1GB>::new(PAGE_STACK_1GB_BASE, PAGE_STACK_1GB_MAX_PAGES),
+                stack_2mb: PageStack::<PAGE_SIZE_2MB>::new(PAGE_STACK_2MB_BASE, PAGE_STACK_2MB_MAX_PAGES),
+                stack_4kb: PageStack::<PAGE_SIZE_4KB>::new(PAGE_STACK_4KB_BASE, PAGE_STACK_4KB_MAX_PAGES),
             }
         }
     }
@@ -369,7 +385,7 @@ impl<'a> Pager<'a> {
         }
     }
 
-    pub fn configure(&'a mut self, config: &Config) {
+    pub fn configure(&mut self, config: &Config) {
         let module_list = ModuleList::from_page(config.get_module_list_address());
         let mmap = MemoryMap::from_page(config.get_memory_map_address());
 
@@ -378,8 +394,11 @@ impl<'a> Pager<'a> {
         // but in order to return the pager, it must be moved from the stack to the caller's 
         // stack which implies a copy and drop, which can't be done if the page stack's contain 
         // these references...
-        self.stack_2mb.set_borrow_source(&self.stack_1gb);
-        self.stack_4kb.set_borrow_source(&self.stack_2mb);
+        // TODO: inline this borrowing logic into the allocators so that the pager 
+        // isn't consistently borrowing itself...
+        // TODO: remove the concept of a borrow source
+        //self.stack_2mb.set_borrow_source(&self.stack_1gb);
+        //self.stack_4kb.set_borrow_source(&self.stack_2mb);
 
         let num_regions = mmap.get_num_regions();
         let kernel_load_info = module_list.get_module_info(0).unwrap();
@@ -472,19 +491,76 @@ impl<'a> Pager<'a> {
         // After this is all setup, then physical memory can be identity mapped to PHYSICAL_OFFSET
     }
 
-    pub fn alloc_page(&mut self, page_type: PageType) -> Option<Address> {
-        match page_type {
-            PageType::Page4K => self.stack_4kb.allocate_page(),
-            PageType::Page2M => self.stack_2mb.allocate_page(),
-            PageType::Page1G => self.stack_1gb.allocate_page(),
+    pub fn allocate_1gb_page(&mut self) -> Option<Address> {
+        self.stack_1gb.allocate_page(self)
+    }
+
+    pub fn allocate_2mb_page(&mut self) -> Option<Address> {
+        match self.stack_2mb.allocate_page(self) {
+            Some(addr) => Some(addr),
+            None => {
+                if let Some(addr) = self.stack_1gb.allocate_page(self) {
+                    for i in 1..512 {
+                        self.stack_2mb.stacks.lock().available_pages.push(addr + (i*PAGE_SIZE_2MB) as Address);
+                    }
+                    Some(addr)
+                } else {
+                    None
+                }
+            }
         }
     }
 
+    pub fn allocate_4kb_page(&mut self) -> Option<Address> {
+        match self.stack_4kb.allocate_page(self) {
+            Some(addr) => Some(addr),
+            None => {
+                if let Some(addr) = self.stack_2mb.allocate_page(self) {
+                    for i in 1..512 {
+                        self.stack_4kb.stacks.lock().available_pages.push(addr + (i*PAGE_SIZE_4KB) as Address);
+                    }
+                    Some(addr)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub fn allocate_page(&mut self, page_type: PageType) -> Option<Address> {
+        match page_type {
+            PageType::Page4K => self.allocate_4kb_page(),
+            PageType::Page2M => self.allocate_2mb_page(),
+            PageType::Page1G => self.allocate_1gb_page(),
+        }
+    }
+
+    pub fn free_page_1gb(&mut self, address: Address) {
+        self.stack_1gb.deallocate_page(address);
+    }
+
+    pub fn free_page_2mb(&mut self, address: Address) {
+        if let Some(agg_addr) = self.stack_2mb.deallocate_page(address) {
+            // we were able to aggregate this page back into a 1gb page, so return it to the 1gb stack
+            self.stack_1gb.stacks.lock().available_pages.push(agg_addr);
+            // TODO: self.stack_1gb.give_page(agg_addr);
+        }
+    }
+
+    pub fn free_page_4kb(&mut self, address: Address) {
+        if let Some(agg_addr) = self.stack_4kb.deallocate_page(address) {
+            // we were able to aggregate this page back into a 2mb page, so return it to the 2mb stack
+            self.stack_2mb.stacks.lock().available_pages.push(agg_addr);
+            // TODO: self.stack_2mb.give_page(agg_addr);
+        }
+    }
+
+    // TODO:
     pub fn free_page(&mut self, page_type: PageType, address: Address) {
         match page_type {
-            PageType::Page4K => self.stack_4kb.deallocate_page(address),
-            PageType::Page2M => self.stack_2mb.deallocate_page(address),
-            PageType::Page1G => self.stack_1gb.deallocate_page(address),
+            PageType::Page4K => self.free_page_4kb(address),
+            PageType::Page2M => self.free_page_2mb(address),
+            PageType::Page1G => self.free_page_1gb(address),
         }
     }
 
@@ -541,7 +617,7 @@ impl<'a> Pager<'a> {
         
         self._map_physical_to_virtual( phys_addr, virtual_addr, flags, 
             || { 
-                self.stack_4kb.allocate_page().map(
+                self.stack_4kb.allocate_page(self).map(
                     |addr| {
                         unsafe {  
                             core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);

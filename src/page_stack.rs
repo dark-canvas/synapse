@@ -58,6 +58,23 @@
 //! remain unmapped, and only mapped into place when required (although the pages can 
 //! be intelligently mapped, rather than requiring the overhead of a page fault)
 
+//! Instead of using an allocated stack, have an array indexes by the next largest page size.
+//! The array contains the count of pages allocated/freed from that largest page size.
+//!
+//! 4kb page insdex == page / 2mb  == 512GB / 2MB == 262144 possible indexes
+//!    array contains:
+//!      u16 count of 4kb pages allocated from each 2mb page
+//!      u16 count of 4kb pages available from each 2mb page
+//!      total of both should always be 512 (and can be regularly asserted), and if the count of allocated pages goes to 0, 
+//!      then the 2mb page can be returned to the 2mb stack and all the 4kb pages can be removed from the 4kb stack 
+//!    if struct uses 4 byte entries == 256 pages, but only need to allocate enough for the actual total memory available
+//!
+//! 2mb page index == page / 1gb (512 possible 2mb pages in 512GB)
+//! 1gb page stack doesn't have this array
+//!
+//! This means the page stack needs to know the highest physical address to create the above structs.
+
+
 #[cfg(test)]
 use mockall::*;
 #[cfg(test)]
@@ -69,6 +86,14 @@ use crate::types::Address;
 
 use spin::Mutex;
 
+use crate::pager::PAGE_SIZE_1GB;
+const ADDRESSES_PER_PAGE: usize = 512; // make this a const in pager?
+
+#[derive(PartialEq, PartialOrd)]
+enum Search {
+    Continue(usize),
+    Match(usize),
+}
 // These traits must use interior mutability to accomplish their goals, as the 
 // interfaces are intentionally non-mut
 
@@ -91,18 +116,73 @@ pub trait PageMapper {
     fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,()>;
 }
 
-pub struct Stacks {
-    pub /* TODO (in crate::pager)*/ allocated_pages: Stack<'static, Address, EXPAND_DOWN>,
+pub struct Stacks<const PAGE_SIZE: usize> 
+where [(); {PAGE_SIZE*ADDRESSES_PER_PAGE}] : {
+    //pub /* TODO (in crate::pager)*/ allocated_pages: Stack<'static, Address, EXPAND_DOWN>,
     pub /* TODO (in crate::pager)*/ available_pages: Stack<'static, Address, EXPAND_UP>,
+    pub /* TODO (in crate::pager)*/ aggregate_map: PageAggregator< {PAGE_SIZE*ADDRESSES_PER_PAGE} >,
 }
 
 // TODO: this should be private
-impl Stacks {
-    fn new(stack_base: Address, page_count: usize) -> Self {
+impl<const PAGE_SIZE: usize> Stacks<PAGE_SIZE>
+where [(); {PAGE_SIZE*ADDRESSES_PER_PAGE}]: {
+    fn new(stack_base: Address, page_count: usize) -> Self 
+    where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
         Stacks {
-            allocated_pages: Stack::<Address, EXPAND_DOWN>::new(stack_base + (page_count * size_of::<Address>()) as Address, page_count),
+            //allocated_pages: Stack::<Address, EXPAND_DOWN>::new(stack_base + (page_count * size_of::<Address>()) as Address, page_count),
             available_pages: Stack::<Address, EXPAND_UP>::new(stack_base, page_count),
+            aggregate_map: PageAggregator::<{PAGE_SIZE * ADDRESSES_PER_PAGE}>::new(
+                stack_base + (page_count * core::mem::size_of::<Address>()) as Address, 
+                page_count / ADDRESSES_PER_PAGE),
+
         }
+    }
+}
+
+
+#[derive(Copy, Clone)]
+struct PageBucket {
+    allocated: u16,
+    available: u16,
+
+}
+
+// TODO: make this "BIGGER_PAGE_SIZE" ?? 
+// Or just document it?
+pub struct PageAggregator<const PAGE_SIZE: usize> {
+    // This struct is used to track the pages which have been allocated from a larger page, and how many are still available
+    // This allows us to determine when all the pages from a larger page have been returned, and we can return the larger page to the larger stack
+    // The aggregate map is indexed by the next largest page size, so for 4kb pages, it's indexed by 2mb pages, and for 2mb pages, it's indexed by 1gb pages
+    pub aggregate_map: &'static mut [PageBucket],
+}
+
+impl<const PAGE_SIZE: usize>  PageAggregator<PAGE_SIZE> {
+    pub fn new(aggregate_map_base: Address, num_buckets: usize) -> Self {
+        PageAggregator {
+            aggregate_map: unsafe { core::slice::from_raw_parts_mut(aggregate_map_base as *mut PageBucket, num_buckets) },
+        }
+    }
+
+    pub fn allocate(&mut self, page_addr: Address) {
+        let agg_index = (page_addr as usize / PAGE_SIZE);
+        self.aggregate_map[agg_index].allocated += 1;
+        self.aggregate_map[agg_index].available -= 1;
+    }
+
+    pub fn deallocate(&mut self, page_addr: Address) -> Option<Address> {
+        let agg_index = (page_addr as usize / PAGE_SIZE);
+        self.aggregate_map[agg_index].allocated -= 1;
+        self.aggregate_map[agg_index].available += 1;
+
+        if self.aggregate_map[agg_index].allocated == 0 {
+            // we hvae all the pages which make up a larger page
+            // remove them all from our stack 
+            self.aggregate_map[agg_index].available = 0;
+            // and indicate the can be returned to the larger stack
+            let agg_page_addr = (agg_index as Address) * PAGE_SIZE as Address;
+            return Some(agg_page_addr);
+        }
+        None
     }
 }
 
@@ -113,7 +193,7 @@ impl Stacks {
 //   - allocate a 2mb page, but free it as a 4kb page?  Leaks memory)
 //   - allocate a 4kb page, but free it as a 2mb page?  (frees memory that could be in use)
 //     - iterate the page tables to ensure that the page in question is of the corret size before freeing
-pub struct PageStack<'a, MAPPER: PageMapper, const PAGE_SIZE: usize > {
+pub struct PageStack<const PAGE_SIZE: usize> where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}]: {
     // Do we even need to track allocated pages?  If available pages is kept sorted (which could be a requirement to 
     // return larger pages to larger pack stacks) then determining double frees is just a matter of ensuring it isn't 
     // already in the available stack.
@@ -121,13 +201,18 @@ pub struct PageStack<'a, MAPPER: PageMapper, const PAGE_SIZE: usize > {
     // Ultimately, determining/preventing double frees should actually be on the programmer, not the OS... it *SHOULD* 
     // be preventable without additionala support from the OS.
     // wrap the whole thing in a mutex?
-    pub /* TODO (in crate::pager)*/ stacks: Mutex< Stacks >,
-    borrower: Option<&'a dyn PageBorrower>,
-    mapper: MAPPER, // if this calls into the pager, then it could call back into the 4kb allocator, so must be done *outside* of the lock
+    // Move the mutex to the caller?
+    pub /* TODO (in crate::pager)*/ stacks: Mutex< Stacks<PAGE_SIZE> >,
+    //pub aggregate_map: PageAggregator< {PAGE_SIZE * ADDRESSES_PER_PAGE} >,
+    //borrower: Option<&'a dyn PageBorrower>,
+    //mapper: MAPPER, // if this calls into the pager, then it could call back into the 4kb allocator, so must be done *outside* of the lock
 }
 
-impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageStack<'a, MAPPER, PAGE_SIZE> {
-    pub fn new(mapper: MAPPER, stack_base: Address, page_count: usize) -> Self {
+impl<const PAGE_SIZE: usize> PageStack<PAGE_SIZE> 
+where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
+
+    pub fn new(stack_base: Address, page_count: usize) -> Self 
+    where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
         // TODO determine where to place these stacks...
         // Allocate pages for the top and bottom of the stack, but leave the middle unmapped... it'll be mapped on demand
         // But the on-demand mapping will be intelligent (not requiring a page fault)
@@ -136,18 +221,21 @@ impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageStack<'a, MAPPER, PAGE_
         // only be in one stack at the same time, they'll never actually collide with each other
         PageStack {
             stacks: Mutex::new(Stacks::new(stack_base, page_count)),
-            borrower: None,
-            mapper: mapper,
+            //borrower: None,
+            //mapper: mapper,
         }
     }
 
-    pub fn set_borrow_source(&mut self, borrower: &'a dyn PageBorrower) {
-        self.borrower = Some(borrower);
-    }
+   // pub fn set_borrow_source(&mut self, borrower: &'a dyn PageBorrower) {
+    //    self.borrower = Some(borrower);
+   // }
 
-    pub fn allocate_page(&self) -> Option<Address> {
+    pub fn allocate_page(&self, mapper: &dyn PageMapper) -> Option<Address> 
+    where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
+
         let mut stacks_lock = self.stacks.lock();
         let stacks = &mut stacks_lock;
+        /*
         if stacks.available_pages.is_empty() {
             // TOOD: borrow page...
             if let Some(borrower) = self.borrower {
@@ -158,7 +246,7 @@ impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageStack<'a, MAPPER, PAGE_
 
                     // TODO: if this calls into the pager, it could allocate new 4kb pages, which could be 
                     // calling back into this very same page stack (creating a dead lock?  Depends on whether spinlock is recursive)
-                    self.mapper.ensure_mapped(top_of_stack, new_top).unwrap();
+                    // self.mapper.ensure_mapped(top_of_stack, new_top).unwrap();
 
                     for i in 0..num_pages {
                         stacks.available_pages.push(page_addr + (i * PAGE_SIZE) as Address);
@@ -166,17 +254,24 @@ impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageStack<'a, MAPPER, PAGE_
                 }
             }
         }
+            */
         //drop(available_pages_lock);
 
         if stacks.available_pages.is_empty() {
             None
         } else {
             let page = stacks.available_pages.pop().unwrap();
-            stacks.allocated_pages.push(page);
+            stacks.aggregate_map.allocate(page);
+            // allocated is an expand down stack...
+            //let top_of_stack = stacks.allocated_pages.top();
+            //let new_top = top_of_stack - size_of::<Address>() as Address;
+            //mapper.ensure_mapped(new_top, top_of_stack).unwrap();
+            //stacks.allocated_pages.push(page);
             Some(page)
         }
     }
 
+    /*
     pub fn allocate_specific(&mut self, page_addr: Address) -> Option<Address> {
         // TODO: ensure alignment of page_addr
 
@@ -192,6 +287,7 @@ impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageStack<'a, MAPPER, PAGE_
             if let Some( (base_address, size) ) = borrower.borrow_specific(page_addr) {
                 let num_pages = size/PAGE_SIZE;
                 // TODO: ensure mapped
+                // self.mapper.ensure_mapped(base_address, base_address + size).unwrap();
                 for i in 0..num_pages {
                     let new_page = base_address + (i * PAGE_SIZE) as Address;
                     if new_page != page_addr {
@@ -203,31 +299,80 @@ impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageStack<'a, MAPPER, PAGE_
 
         None
     }
+        */
 
-    pub fn deallocate_page(&mut self, page_addr: Address) {
+    pub fn deallocate_page(&mut self, page_addr: Address) -> Option<Address>
+    where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
+
         // TODO: page align the address
         // TODO: confirm it was actually allocated
         let mut stacks_lock = self.stacks.lock();
         let stacks = &mut stacks_lock;
 
-        if stacks.allocated_pages.is_empty() {
-            // TODO: should this return an error?
-            return; // No pages to deallocate
+        stacks.available_pages.push(page_addr);
+
+        let mut result = None;
+        if PAGE_SIZE != PAGE_SIZE_1GB {
+            //let aggregate_page_size = PAGE_SIZE * ADDRESSES_PER_PAGE;
+            //let agg_index = (page_addr / aggregate_page_size as Address) as usize;
+            //self.aggregate_map[agg_index].allocated -= 1;
+            //self.aggregate_map[agg_index].available += 1;
+            result = stacks.aggregate_map.deallocate(page_addr);
+
+            if let Some(bigger_page) = result {
+                let bigger_page_size = (PAGE_SIZE * ADDRESSES_PER_PAGE) as Address;
+
+                let is_within = |addr: Address| -> bool {
+                    addr >= bigger_page && addr < bigger_page + bigger_page_size
+                };
+
+                // we hvae all the pages which make up a larger page
+                // remove them all from our stack
+                // iterate the page stack from top and from bottom
+                // from bottom seearches for pages to remove
+                // from top searches for pages that belong (to swap with the ones from the bottom)
+                let mut from_bottom_index = Search::Continue(0);
+                let mut from_top_index = Search::Continue(stacks.available_pages.len() - 1);
+                // TODO: get_unchecked() since we know it's within range?
+                // Or create iterators for this purpose?
+                while from_bottom_index < from_top_index {
+                    from_bottom_index = match from_bottom_index {
+                        Search::Continue(i) => {
+                            if is_within(stacks.available_pages.get(i).unwrap()) {
+                                Search::Match(i)
+                            } else {
+                                Search::Continue(i+1)
+                            }
+                        },
+                        Search::Match(i) => Search::Match(i)
+                    };
+
+                    from_top_index = match from_top_index {
+                        Search::Continue(i) => {
+                            if !is_within(stacks.available_pages.get(i).unwrap()) {
+                                Search::Match(i)
+                            } else {
+                                Search::Continue(i-1)
+                            }
+                        },
+                        Search::Match(i) => Search::Match(i)
+                    };
+
+                    if let Search::Match(i) = from_bottom_index &&
+                       let Search::Match(j) = from_top_index {
+                        stacks.available_pages.swap(i, j);
+                        from_bottom_index = Search::Continue(i+1);
+                        from_top_index = Search::Continue(j-1);
+                    }
+                }
+            }
         }
-
-        // TODO: this isn't correct
-        // find page in allocate stack
-        // swap it with the top of the stack
-        // decrement the stack size
-
-        panic!("deallocate_page not implemented yet");
-        //let page_addr = stacks.allocated_pages.pop().unwrap();
-        //stacks.available_pages.push(page_addr);
-        //Some(page_addr)
+        result
     }
 }
 
 // for Mutex PageStack?  How to hanndle this?
+/*
 impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageBorrower for PageStack<'a, MAPPER, PAGE_SIZE> {
     fn borrow_page(&self) -> Option< (Address, usize) > {
         None
@@ -237,6 +382,7 @@ impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageBorrower for PageStack<
         None
     }
 }
+    */
 
 #[cfg(test)]
 mod tests {
@@ -244,13 +390,14 @@ mod tests {
 
     #[test]
     fn test_create_stack() {
-        let borrower = MockPageBorrower::new();
-        let mapper = MockPageMapper::new();
+        //let borrower = MockPageBorrower::new();
+        //let mapper = MockPageMapper::new();
 
-        let ps = PageStack::<_, 4096>::new(mapper, 0x1000, 0);
+        let ps = PageStack::<4096>::new(0x1000, 0);
         // TODO: what can we assert here?
     }
 
+    /*
     #[test]
     fn test_borrow() {
         const pages: usize = 10;
@@ -282,6 +429,30 @@ mod tests {
         assert_eq!(stack_memory[2], 0x3000);
         assert_eq!(stack_memory[3], 0x4000);
         assert_eq!(stack_memory[4], guard_band)
+    }
+    */
+
+    #[test]
+    fn test_aggregator() {
+        let agg_data = [PageBucket{ allocated:0, available:512 }; 10];
+        let mut aggregator = PageAggregator::<1000>::new(agg_data.as_ptr() as Address, agg_data.len());
+
+        aggregator.allocate(0);
+        assert_eq!(aggregator.aggregate_map[0].allocated, 1);
+        assert_eq!(aggregator.aggregate_map[0].available, 511);
+
+        aggregator.allocate(100);
+        assert_eq!(aggregator.aggregate_map[0].allocated, 2);
+        assert_eq!(aggregator.aggregate_map[0].available, 510);
+
+        aggregator.allocate(5123);
+        assert_eq!(aggregator.aggregate_map[5].allocated, 1);
+        assert_eq!(aggregator.aggregate_map[5].available, 511);
+
+        let result = aggregator.deallocate(5999);
+        assert_eq!(aggregator.aggregate_map[5].allocated, 0);
+        assert_eq!(aggregator.aggregate_map[5].available, 0);
+        assert_eq!(result, Some(5000));
     }
 
 }
