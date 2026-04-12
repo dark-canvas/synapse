@@ -87,7 +87,7 @@ use crate::types::Address;
 use spin::Mutex;
 
 use crate::pager::PAGE_SIZE_1GB;
-const ADDRESSES_PER_PAGE: usize = 512; // make this a const in pager?
+pub const ADDRESSES_PER_PAGE: usize = 512; // make this a const in pager?
 
 #[derive(PartialEq, PartialOrd)]
 enum Search {
@@ -126,13 +126,13 @@ where [(); {PAGE_SIZE*ADDRESSES_PER_PAGE}] : {
 // TODO: this should be private
 impl<const PAGE_SIZE: usize> Stacks<PAGE_SIZE>
 where [(); {PAGE_SIZE*ADDRESSES_PER_PAGE}]: {
-    fn new(stack_base: Address, page_count: usize) -> Self 
+    fn new(stack_base: Address, page_count: usize, aggregator_base: Address) -> Self 
     where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
         Stacks {
             //allocated_pages: Stack::<Address, EXPAND_DOWN>::new(stack_base + (page_count * size_of::<Address>()) as Address, page_count),
             available_pages: Stack::<Address, EXPAND_UP>::new(stack_base, page_count),
             aggregate_map: PageAggregator::<{PAGE_SIZE * ADDRESSES_PER_PAGE}>::new(
-                stack_base + (page_count * core::mem::size_of::<Address>()) as Address, 
+                aggregator_base,
                 page_count / ADDRESSES_PER_PAGE),
 
         }
@@ -156,20 +156,44 @@ pub struct PageAggregator<const PAGE_SIZE: usize> {
     pub aggregate_map: &'static mut [PageBucket],
 }
 
+pub trait AddressAggregator {
+    fn mark_available(&mut self, page_addr: Address);
+    fn mark_allocated(&mut self, page_addr: Address);
+    fn allocate(&mut self, page_addr: Address);
+    fn deallocate(&mut self, page_addr: Address) -> Option<Address>;
+}
+
 impl<const PAGE_SIZE: usize>  PageAggregator<PAGE_SIZE> {
     pub fn new(aggregate_map_base: Address, num_buckets: usize) -> Self {
+        // TODO: we can't assume this is mapped yet!
+        //unsafe {
+        //    core::ptr::write_bytes(aggregate_map_base as *mut u8, 0, core::mem::size_of::<PageBucket>() * num_buckets);
+        //}
         PageAggregator {
-            aggregate_map: unsafe { core::slice::from_raw_parts_mut(aggregate_map_base as *mut PageBucket, num_buckets) },
+            aggregate_map: unsafe { core::slice::from_raw_parts_mut(aggregate_map_base as *mut PageBucket, num_buckets) }
         }
     }
+}
 
-    pub fn allocate(&mut self, page_addr: Address) {
+impl <const PAGE_SIZE: usize> AddressAggregator for PageAggregator<PAGE_SIZE> {
+
+    fn mark_available(&mut self, page_addr: Address) {
+        let agg_index = (page_addr as usize / PAGE_SIZE) as usize;
+        self.aggregate_map[agg_index].available += 1;
+    }
+
+    fn mark_allocated(&mut self, page_addr: Address) {
+        let agg_index = (page_addr as usize / PAGE_SIZE) as usize;
+        self.aggregate_map[agg_index].allocated += 1;
+    }
+
+    fn allocate(&mut self, page_addr: Address) {
         let agg_index = (page_addr as usize / PAGE_SIZE);
         self.aggregate_map[agg_index].allocated += 1;
         self.aggregate_map[agg_index].available -= 1;
     }
 
-    pub fn deallocate(&mut self, page_addr: Address) -> Option<Address> {
+    fn deallocate(&mut self, page_addr: Address) -> Option<Address> {
         let agg_index = (page_addr as usize / PAGE_SIZE);
         self.aggregate_map[agg_index].allocated -= 1;
         self.aggregate_map[agg_index].available += 1;
@@ -211,7 +235,7 @@ pub struct PageStack<const PAGE_SIZE: usize> where [(); {PAGE_SIZE * ADDRESSES_P
 impl<const PAGE_SIZE: usize> PageStack<PAGE_SIZE> 
 where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
 
-    pub fn new(stack_base: Address, page_count: usize) -> Self 
+    pub fn new(stack_base: Address, page_count: usize, aggregator_base: Address) -> Self 
     where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
         // TODO determine where to place these stacks...
         // Allocate pages for the top and bottom of the stack, but leave the middle unmapped... it'll be mapped on demand
@@ -220,7 +244,7 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
         // size of both the allocated and available stacks, which means they technically overlap memory, but becaues a page can 
         // only be in one stack at the same time, they'll never actually collide with each other
         PageStack {
-            stacks: Mutex::new(Stacks::new(stack_base, page_count)),
+            stacks: Mutex::new(Stacks::new(stack_base, page_count, aggregator_base)),
             //borrower: None,
             //mapper: mapper,
         }
@@ -434,8 +458,14 @@ mod tests {
 
     #[test]
     fn test_aggregator() {
-        let agg_data = [PageBucket{ allocated:0, available:512 }; 10];
+        let agg_data = [PageBucket{ allocated:0, available:0 }; 10];
         let mut aggregator = PageAggregator::<1000>::new(agg_data.as_ptr() as Address, agg_data.len());
+
+        // Creating the aggregator will clear the memory... fill up buckets
+        for i in 0..agg_data.len() {
+            aggregator.aggregate_map[i].allocated = 0;
+            aggregator.aggregate_map[i].available = 512;
+        }
 
         aggregator.allocate(0);
         assert_eq!(aggregator.aggregate_map[0].allocated, 1);
