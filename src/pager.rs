@@ -15,9 +15,27 @@
 //!   - 512 1gb pages (2^9)        == 4096 requires for the page stack
 //!
 //! Which can be mapped to the top of the virtual address space (above the kernel)
-//!   - 0xFFFFFFD000000000 - 0xFFFFFFE000000000 -> 4kb page stack
-//!   - 0xFFFFFFE000000000 - 0xFFFFFFE000200000 -> 2mb page stack
-//!   - 0xFFFFFFE000200000 - 0xFFFFFFE000201000 -> 1gb page stack
+//!   - 0xFFFFFFD000000000 - 0xFFFFFFE000000000 -> 4kb page management (prefer to only allocate these for page tables?)
+//!      - 0xFFFFFFD000000000 - 0xFFFFFFD040000000 -> 4kb page stack (512GB / 4KB * 8 bytes per entry) == 1gb (allocate multiple 2mb pages for this?)
+//!      - 0xFFFFFFD040000000 - 0xFFFFFFD040100000 -> 2mb page aggregator (512GB / 2MB * sizeof(PageBucket) (4)) == 1mb (could allocate a 2mb page for this?)
+//!   - 0xFFFFFFE000000000 - 0xFFFFFFE000200000 -> 2mb page management
+//!      - 0xFFFFFFE000000000 - 0xFFFFFFE000200000 -> 2mb page stack (512GB / 2MB * 8 bytes per entry) == 2m (allocate a 2mb page for this?)
+//!      - 0xFFFFFFE000200000 - 0xFFFFFFE000201000 -> 1gb page aggregator (512GB / 1GB * sizeof(PageBucket) (4)) == 2kb (rounded to 1 page)
+//!   - 0xFFFFFFE000201000 - 0xFFFFFFE000202000 -> 1gb page management
+//!      - 0xFFFFFFE000201000 - 0xFFFFFFE000202000 -> 1gb page stack (512GB / 1GB * 8 bytes per entry) == 4kb
+//!      - 0xFFFFFFE000202000 - 0xFFFFFFE000203000 -> 512gb page aggregator is really just a single PageBucket
+//!
+//! Note that, for symmetry, I've createad a 512GB page aggregator (eg. 1GB * ADDRESSES_PER_PAGE).
+//! There isn't a notion of a 512GB page in the 4 level paging that is used by this kernel, however, 
+//! 5 level paging does exist, and does introduce the notion of a 512GB page, so this aggregator allows 
+//! for more easily adapting to 5 level paging in the future.
+//! However, the current intent of this structure isn't to check whether we can aggregate 512 adjacent 
+//! 1GB pages and return them to a larger page stack, but instead just a simple tracking of 
+//! available/allocated pages (and it simplifies the code).
+//! The simplification breaks if the host platform actually has >= 512GB of memory, as the aggregator 
+//! will try to consolodate adjacent pages into a 512GB page if it can, but this is an intentional 
+//! design decision/tradeoff -- the current kernel does not support more than 512GB of physical memory.
+//! Supporting >= 512GB of physical memory will likely also involve supporting 5 level paging.
 //!
 //! TODO: add a global define for the amount of physical memory defined and create 
 //! asserts for if/when the platform has more (i.e., we can't fully support it)
@@ -38,7 +56,9 @@ use satus_struct::memory_map::{MemoryMap, MemoryRegionType};
 use crate::types::Address;
 use crate::stack::SimpleStack;
 use crate::page_stack::{PageStack, PageMapper};
-
+use crate::page_stack::AddressAggregator;
+use crate::page_stack::Stacks;
+use crate::page_stack::ADDRESSES_PER_PAGE;
 //use log::info;
 
 pub const PAGE_SIZE_4KB: usize = 4*1024;
@@ -53,17 +73,22 @@ const PHYSICAL_OFFSET: Address = 0xFFFFFF0000000000;
 
 const PAGE_STACK_4KB_BASE: Address = 0xFFFFFFD000000000;
 const PAGE_STACK_2MB_BASE: Address = 0xFFFFFFE000000000;
-const PAGE_STACK_1GB_BASE: Address = 0xFFFFFFE000200000;
+const PAGE_STACK_1GB_BASE: Address = 0xFFFFFFE000201000;
 
 const PAGE_STACK_4KB_MAX_PAGES: usize = 134217728;
 const PAGE_STACK_2MB_MAX_PAGES: usize = 262144;
 const PAGE_STACK_1GB_MAX_PAGES: usize = 512;
+
+const PAGE_AGGREGATOR_2MB_BASE: Address = 0xFFFFFFD040000000;
+const PAGE_AGGREGATOR_1GB_BASE: Address = 0xFFFFFFE000200000;
+const PAGE_AGGREGATOR_512GB_BASE: Address = 0xFFFFFFE000202000;
 
 #[derive(Copy, Clone)]
 pub struct PhysicalAddress(Address);
 #[derive(Copy, Clone)]
 pub struct VirtualAddress(Address);
 
+#[derive(PartialEq)]
 pub enum PageType {
     Page4K,
     Page2M,
@@ -337,9 +362,10 @@ impl Pager {
 
             Pager { 
                 //pl4_table: pl4_table,  // Make this an address instead?
-                stack_1gb: PageStack::<PAGE_SIZE_1GB>::new(PAGE_STACK_1GB_BASE, PAGE_STACK_1GB_MAX_PAGES),
-                stack_2mb: PageStack::<PAGE_SIZE_2MB>::new(PAGE_STACK_2MB_BASE, PAGE_STACK_2MB_MAX_PAGES),
-                stack_4kb: PageStack::<PAGE_SIZE_4KB>::new(PAGE_STACK_4KB_BASE, PAGE_STACK_4KB_MAX_PAGES),
+                // TODO: rename?  This isn't just a page stack, it's also possibly an aggregator?
+                stack_1gb: PageStack::<PAGE_SIZE_1GB>::new(PAGE_STACK_1GB_BASE, PAGE_STACK_1GB_MAX_PAGES, PAGE_AGGREGATOR_512GB_BASE),
+                stack_2mb: PageStack::<PAGE_SIZE_2MB>::new(PAGE_STACK_2MB_BASE, PAGE_STACK_2MB_MAX_PAGES, PAGE_AGGREGATOR_1GB_BASE),
+                stack_4kb: PageStack::<PAGE_SIZE_4KB>::new(PAGE_STACK_4KB_BASE, PAGE_STACK_4KB_MAX_PAGES, PAGE_AGGREGATOR_2MB_BASE),
             }
         }
     }
@@ -363,8 +389,9 @@ impl Pager {
             self._map_physical_to_virtual(
                 PhysicalAddress((new_page)().expect("Unable to map page stack")), 
                 VirtualAddress(stack_base_address + (i*PAGE_SIZE_4KB) as Address),
+                PageType::Page4K,
                 PageTableFlags::WRITABLE,
-                || {
+                &mut || {
                     println!("Acquiring new page for page stack: {}", i);
                     (new_page)().map(|addr| {
                         unsafe {  
@@ -377,11 +404,14 @@ impl Pager {
         }
     }
 
-    fn populate_page_stack<T>(&self, stack: &mut T, pages: PageIterator) 
-        where T : SimpleStack<Address> + Index<usize> {
+    //fn populate_page_stack<S, A>(&self, stack: &mut S, aggregator: &mut A, pages: PageIterator) 
+    //    where S : SimpleStack<Address> + Index<usize>, A : AddressAggregator {
+    fn populate_page_stack<const PAGE_SIZE: usize>(&self, mem: &mut Stacks<PAGE_SIZE>, pages: PageIterator)
+    where [(); {PAGE_SIZE*ADDRESSES_PER_PAGE}]: {
         println!("Populating stack with pages...");
         for page in pages {
-            stack.push(page);
+            mem.available_pages.push(page);
+            mem.aggregate_map.mark_available(page);
         }
     }
 
@@ -415,18 +445,69 @@ impl Pager {
         // NOTE: no provision has been made to ensure that the page stack actually has enough 4kb pages 
         // for this task... at some point I'll need to allow for 2mb pages to be consumed for this 
         // purpose iff 4kb pages run out.
-        let mut page_table_allocator = PageIterator::new(&mmap, PAGE_SIZE_4KB)
+        let mut four_kb_page_allocator = PageIterator::new(&mmap, PAGE_SIZE_4KB)
                 .with_region_type(MemoryRegionType::Available)
                 .with_base_address(required_base);
 
-        let mut page_allocator = || {
-            page_table_allocator.next()
+        // There are a few structures which make sense to allocate using 2mb pages
+        // - the 2mb page stack (which is exactly 2mb)
+        // - the 2mb page aggregator (which is 1mb total; leaves room for expansion)
+        // - the 4kb page stack (for tlb efficiency reasons, it makes sense to *try* to use 2mb pages here)
+        let mut two_mb_page_allocator = PageIterator::new(&mmap, PAGE_SIZE_2MB)
+            .with_region_type(MemoryRegionType::Available);
+
+        let two_mb_aggregator_base_physical = PhysicalAddress(two_mb_page_allocator.next().unwrap()); 
+        let one_gb_aggregator_base_physical = PhysicalAddress(four_kb_page_allocator.next().unwrap());
+        let five_twelve_gb_allocator_base_physical = PhysicalAddress(four_kb_page_allocator.next().unwrap());
+
+        // TODO - this should really be in the page stack constructor somewhere... thre's a section commented out 
+        // in new() because the page isn't mapped yet (order of operations issue) which needs to get fixed
+        unsafe {
+            core::ptr::write_bytes(two_mb_aggregator_base_physical.0 as *mut u8, 0, 0x200000);
+            core::ptr::write_bytes(one_gb_aggregator_base_physical.0 as *mut u8, 0, 0x1000);
+            core::ptr::write_bytes(five_twelve_gb_allocator_base_physical.0 as *mut u8, 0, 0x1000);
+        }        
+
+        let mut create_page_table = || {
+             four_kb_page_allocator.next().map(
+                |addr| {
+                    unsafe {  
+                        core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                        PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
+                    }
+                }
+            )  
         };
+
+        // Map in memory for the aggregators
+        // 2mb aggregators == 2mb page
+        self._map_physical_to_virtual( 
+            two_mb_aggregator_base_physical, 
+            VirtualAddress(PAGE_AGGREGATOR_2MB_BASE), 
+            PageType::Page2M,
+            PageTableFlags::WRITABLE, &mut create_page_table);
+        // 1gb aggregator == 4kb page
+        self._map_physical_to_virtual( 
+            one_gb_aggregator_base_physical,
+            VirtualAddress(PAGE_AGGREGATOR_1GB_BASE), 
+            PageType::Page4K,
+            PageTableFlags::WRITABLE, &mut create_page_table);
+        // 512gb aggregator == 4kb page
+        self._map_physical_to_virtual( 
+            five_twelve_gb_allocator_base_physical, 
+            VirtualAddress(PAGE_AGGREGATOR_512GB_BASE), 
+            PageType::Page4K,
+            PageTableFlags::WRITABLE, &mut create_page_table);
 
         // TODO: break this up into steps to map the pages in to create the stacks, 
         // and then to push the pages to the stacks, as the former will consume pages which we don't want to push onto the stacks,
         // so we want to know which ones have been consumed before populating the 4kb stack (which is where the page table allocator 
         // is getting pages from) and we can add an exclusion range to that page iterator
+        drop(create_page_table);
+        let mut page_allocator = || {
+            four_kb_page_allocator.next()
+        };
+
         println!("Creating 1GB page stack");
         self.create_page_stack(
             &mut self.stack_1gb.stacks.lock().available_pages, 
@@ -446,24 +527,29 @@ impl Pager {
                 .with_region_type(MemoryRegionType::Available), 
             &mut page_allocator);
 
+        // TODO: Need to update the page aggregator here as well...
+        // possible this should all be moved into a method in page_stack.rs?
         self.populate_page_stack(
-            &mut self.stack_1gb.stacks.lock().available_pages, 
+            &mut self.stack_1gb.stacks.lock(),
             PageIterator::new(&mmap, PAGE_SIZE_1GB)
                 .with_region_type(MemoryRegionType::Available));
+        
         self.populate_page_stack(
-            &mut self.stack_2mb.stacks.lock().available_pages, 
+            &mut self.stack_2mb.stacks.lock(), 
             PageIterator::new(&mmap, PAGE_SIZE_2MB)
-                .with_region_type(MemoryRegionType::Available));
+                .with_region_type(MemoryRegionType::Available)
+                .with_base_address(
+                    two_mb_page_allocator.get_current().unwrap_or(0)));
         // The act of creating the page stacks will have consumed some of the available 4kb pages, so we need to
         // exclude those from the page iterator we use to populate the 4kb stack, otherwise we'll end up pushing 
         // pages onto the stack which could be in ues as page tables/dircetories, or mapped in to the page stack itself.
         self.populate_page_stack(
-            &mut self.stack_4kb.stacks.lock().available_pages, 
+            &mut self.stack_4kb.stacks.lock(), 
             PageIterator::new(&mmap, PAGE_SIZE_4KB)
                 .with_region_type(MemoryRegionType::Available)
                 .excluding_range(
                     required_base, 
-                    page_table_allocator.get_current().unwrap_or(required_base)));
+                    four_kb_page_allocator.get_current().unwrap_or(required_base)));
 
         // now that all of this in place, we can explicitly allocate the allocated pages 
         // the the page stack itself will ensure the structure is properly mapped 
@@ -613,10 +699,11 @@ impl Pager {
         &self, 
         phys_addr: PhysicalAddress, 
         virtual_addr: VirtualAddress, 
+        page_type: PageType,
         flags: x86_64::structures::paging::PageTableFlags) -> Result<(), &'static str> {
         
-        self._map_physical_to_virtual( phys_addr, virtual_addr, flags, 
-            || { 
+        self._map_physical_to_virtual( phys_addr, virtual_addr, page_type, flags, 
+            &mut || { 
                 self.stack_4kb.allocate_page(self).map(
                     |addr| {
                         unsafe {  
@@ -632,8 +719,9 @@ impl Pager {
         &self, 
         phys_addr: PhysicalAddress, 
         virtual_addr: VirtualAddress, 
+        page_type: PageType,
         flags: x86_64::structures::paging::PageTableFlags,
-        mut create_page_table: F) -> Result<(), &'static str>
+        create_page_table: &mut F) -> Result<(), &'static str>
 
         where F: FnMut() -> Option< PhysFrame::<Size4KiB> > {
 
@@ -661,15 +749,29 @@ impl Pager {
             let pl3_table = &mut *(pl4_entry.addr().as_u64() as *mut PageTable);
             let pl3_entry = &mut pl3_table[pl3_index];
             if pl3_entry.is_unused() {
+                if page_type == PageType::Page1G {
+                    pl3_entry.set_addr(PhysAddr::new(phys_addr as u64), 
+                    flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
+                    return Ok(());
+                }
                 let new_frame = (create_page_table)().ok_or("Couldn't create page table")?;
                 pl3_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+            } else if page_type == PageType::Page1G {
+                return Err("Virtual address already mapped");
             }
 
             let pl2_table = &mut *(pl3_entry.addr().as_u64() as *mut PageTable);
             let pl2_entry = &mut pl2_table[pl2_index];
             if pl2_entry.is_unused() {
+                if page_type == PageType::Page2M {
+                    pl2_entry.set_addr(PhysAddr::new(phys_addr as u64), 
+                    flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
+                    return Ok(());
+                }
                 let new_frame = (create_page_table)().ok_or("Couldn't create page table")?;
                 pl2_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+            } else if page_type == PageType::Page2M {
+                return Err("Virtual address already mapped");
             }
 
             let pl1_table = &mut *(pl2_entry.addr().as_u64() as *mut PageTable);
