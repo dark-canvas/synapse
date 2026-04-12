@@ -417,7 +417,7 @@ mod tests {
         //let borrower = MockPageBorrower::new();
         //let mapper = MockPageMapper::new();
 
-        let ps = PageStack::<4096>::new(0x1000, 0);
+        let ps = PageStack::<4096>::new(0x1000, 0, 0x2000);
         // TODO: what can we assert here?
     }
 
