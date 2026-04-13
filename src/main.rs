@@ -8,7 +8,6 @@ extern crate std;
 #[macro_use]
 mod logger;
 mod pager;
-mod page_stack;
 mod stack;
 mod types;
 
