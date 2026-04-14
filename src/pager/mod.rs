@@ -65,7 +65,9 @@ use self::address_aggregator::AddressAggregator;
 use self::page_stack::Stacks;
 use self::page_stack::ADDRESSES_PER_PAGE;
 use self::page_iterator::PageIterator;
-//use log::info;
+
+// TODO assert that the target platform doesn't have more than this
+pub const PAGER_MAX_SUPPORTED_MEMORY: usize = 512*1024*1024*1024; // 512GB
 
 pub const PAGE_SIZE_4KB: usize = 4*1024;
 pub const PAGE_SIZE_2MB: usize = 2*1024*1024;
@@ -94,7 +96,7 @@ pub struct PhysicalAddress(Address);
 #[derive(Copy, Clone)]
 pub struct VirtualAddress(Address);
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Copy, Clone)]
 pub enum PageType {
     Page4K,
     Page2M,
@@ -105,48 +107,69 @@ type PageAllocator = fn() -> Result< Address, &'static str>;
 // Not sure if the error string is actually useful here
 type CreatePageTable = fn() -> Result< PhysFrame::<Size4KiB>, &'static str>;
 
-
-
-// TODO: remove?
-#[derive(Clone)]
-struct StubMapper {}
-
-impl PageMapper for StubMapper {
-    fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,()> {
-        panic!("ensure_mapped not implemented");
-        Err(())
-    }
-}
-
 pub struct Pager {
-    /// Must return a zero'd out 4kb physical page address
-    //create_page_table: GetPhysicalPage,
-
-    // TODO: how to represent the borrower and mapper here, as they will have to have a reference to the pager, but 
-    // the pager hasn't yet been created...
     stack_1gb: PageStack::<PAGE_SIZE_1GB>,
     stack_2mb: PageStack::<PAGE_SIZE_2MB>,
     stack_4kb: PageStack::<PAGE_SIZE_4KB>,
 }
 
-// TODO: probably doesn't need to be public
 pub fn pages_required(size: usize) -> usize {
     (size + (PAGE_SIZE_4KB - 1)) / PAGE_SIZE_4KB
 }
 
+pub fn get_pl4_table() -> &'static mut PageTable {
+    unsafe {
+        let (pl4_frame, _flags) = Cr3::read();
+        &mut *(pl4_frame.start_address().as_u64() as *mut PageTable)
+    }
+}
+
 impl PageMapper for Pager {
     // TODO: Is this the right way to go?
-    // This creates a bit of a weird stack...
+    // This creates a bit of a weird call stack...
     // - allocate a page (general purpose heap alloc)
     //   - call into page stack allocator
     //     - ensure mapped gets called to ensure the stack is the right size
     //       - ensure mapped needs to allocate a page
-    //         - gets page from the page stack, which then calls ensure_mapped
+    //         - gets page from the page stack, which then calls ensure_mapped 
+    //           (no longer the case; ensure_mapped is only potentially called when freeing a page
+    //            to ensure the available stack is big enough)
     //
-    // I think this means we need to ensure the pages *before* trying to acquire a page
-    fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,()> {
-        Err(())
-    } 
+    // TODO: specify the page size?
+    // TODO: address -> VirtualAddress
+    fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool, &'static str> {
+        let mut pages_mapped = false;
+        let mut current_addr = base;
+        while current_addr < end {
+            let page_type = if end - current_addr >= PAGE_SIZE_1GB as Address && (current_addr & PAGE_MASK_1GB as Address == 0) {
+                PageType::Page1G
+            } else if end - current_addr >= PAGE_SIZE_2MB as Address && (current_addr & PAGE_MASK_2MB as Address == 0) {
+                PageType::Page2M
+            } else {
+                PageType::Page4K
+            };
+
+            match self.ensure_mapped_page(
+                VirtualAddress(current_addr), 
+                page_type, 
+                PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE) {
+                    Ok(mapped) => {
+                        if mapped {
+                            pages_mapped = true;
+                        }
+                    },
+                    Err(e) => return Err(e),
+                }
+
+            current_addr += (match page_type {
+                PageType::Page1G => PAGE_SIZE_1GB,
+                PageType::Page2M => PAGE_SIZE_2MB,
+                PageType::Page4K => PAGE_SIZE_4KB,
+            }) as Address;
+        }
+
+        Ok(pages_mapped)
+    }
 }
 
 impl Pager {
@@ -164,7 +187,6 @@ impl Pager {
         let (pl4_frame, _flags) = Cr3::read();
         let pl4_addr: PhysAddr = pl4_frame.start_address();
 
-        let mapper = StubMapper{};
         // TODO: detrermine number of 4kb pages (audit mapped pages or get it from bootloader?)
         // TODO: create page stacks for 4kb, 2mb and 1gb pages
 
@@ -186,15 +208,10 @@ impl Pager {
         }
     }
 
-    // might need to template this function?
-    // PageIterator could be a trait, or a concrete class with different data?
-    // TODO: this only works for expand up stacks...
     fn create_page_stack<T, F>(&self, stack: &mut T, pages: PageIterator, new_page: &mut F) 
         where T : SimpleStack<Address> + Index<usize>,
               F : FnMut() -> Option< Address > {
 
-        // TODO: this doeesn't seem to be returning the base of the stack, it's returning the top!?
-        // Confirm what's going on here.
         let stack_base_address = (ptr::addr_of!(stack[0]) as *const Address) as Address;
         let pages_count = pages.get_count();
         let required_stack_size_in_pages = pages_required(pages_count * size_of::<Address>());
@@ -240,11 +257,6 @@ impl Pager {
         // but in order to return the pager, it must be moved from the stack to the caller's 
         // stack which implies a copy and drop, which can't be done if the page stack's contain 
         // these references...
-        // TODO: inline this borrowing logic into the allocators so that the pager 
-        // isn't consistently borrowing itself...
-        // TODO: remove the concept of a borrow source
-        //self.stack_2mb.set_borrow_source(&self.stack_1gb);
-        //self.stack_4kb.set_borrow_source(&self.stack_2mb);
 
         let num_regions = mmap.get_num_regions();
         let kernel_load_info = module_list.get_module_info(0).unwrap();
@@ -367,37 +379,15 @@ impl Pager {
                     required_base, 
                     four_kb_page_allocator.get_current().unwrap_or(required_base)));
 
-        // now that all of this in place, we can explicitly allocate the allocated pages 
-        // the the page stack itself will ensure the structure is properly mapped 
-        // underneath by getting pages from the 4kb stack, and potentially borrowing 
-        // from the 2mb or 1gb stacks.
-
-        // we're abour to populate the page stacks with all the avilable pages, but they're 
-        // current not mapped at all.
-        // The act of mapping pages to form the stacks will consume pages in order to create 
-        // l2, 3, and 4 tables, so we need some algorithm to select those pages from 
-        // the count of free pages
-
-        // Need to push all available pages onto the stacks, preferring to push the largest (1gb) pages first
-        // Need to know how much memory exists
-        // How?
-        // Once that's known, we need to expicitly map enough pages to populate the 1GB stack,
-        // Then, if anything remains, we need to map enough pages to populate the 2MB stack,
-        // Then, if anything remains, we need to map enough pages to populate the 4KB stack.
-        // Worst case scenario means we need 1 4kb page for every 512*4096 == 2mb of physical memory
-        // To do this, we need a way to allocate free 4kb pages... which is tricky, as this whole 
-        // thing we're coding is meant to do exactly that... there's a chicken and egg scenario.
-        // Explicitly create the stacks as if everything is available?
-        // And then allocate various pages after?
 
         // After this is all setup, then physical memory can be identity mapped to PHYSICAL_OFFSET
     }
 
-    pub fn allocate_1gb_page(&mut self) -> Option<Address> {
+    pub fn allocate_1gb_page(&self) -> Option<Address> {
         self.stack_1gb.allocate_page(self)
     }
 
-    pub fn allocate_2mb_page(&mut self) -> Option<Address> {
+    pub fn allocate_2mb_page(&self) -> Option<Address> {
         match self.stack_2mb.allocate_page(self) {
             Some(addr) => Some(addr),
             None => {
@@ -413,7 +403,7 @@ impl Pager {
         }
     }
 
-    pub fn allocate_4kb_page(&mut self) -> Option<Address> {
+    pub fn allocate_4kb_page(&self) -> Option<Address> {
         match self.stack_4kb.allocate_page(self) {
             Some(addr) => Some(addr),
             None => {
@@ -429,7 +419,7 @@ impl Pager {
         }
     }
 
-    pub fn allocate_page(&mut self, page_type: PageType) -> Option<Address> {
+    pub fn allocate_page(&self, page_type: PageType) -> Option<Address> {
         match page_type {
             PageType::Page4K => self.allocate_4kb_page(),
             PageType::Page2M => self.allocate_2mb_page(),
@@ -437,28 +427,37 @@ impl Pager {
         }
     }
 
-    pub fn free_page_1gb(&mut self, address: Address) {
+    fn allocate_page_table(&self) -> Option<PhysFrame::<Size4KiB>> {
+        self.allocate_4kb_page().map(|addr| {
+            unsafe {  
+                core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
+            }
+        })
+    }
+
+    pub fn free_page_1gb(&self, address: Address) {
         self.stack_1gb.deallocate_page(address);
     }
 
-    pub fn free_page_2mb(&mut self, address: Address) {
+    pub fn free_page_2mb(&self, address: Address) {
         if let Some(agg_addr) = self.stack_2mb.deallocate_page(address) {
             // we were able to aggregate this page back into a 1gb page, so return it to the 1gb stack
-            self.stack_1gb.stacks.lock().available_pages.push(agg_addr);
-            // TODO: self.stack_1gb.give_page(agg_addr);
+            self.stack_1gb.deallocate_page(agg_addr);
         }
     }
 
-    pub fn free_page_4kb(&mut self, address: Address) {
+    pub fn free_page_4kb(&self, address: Address) {
         if let Some(agg_addr) = self.stack_4kb.deallocate_page(address) {
             // we were able to aggregate this page back into a 2mb page, so return it to the 2mb stack
-            self.stack_2mb.stacks.lock().available_pages.push(agg_addr);
-            // TODO: self.stack_2mb.give_page(agg_addr);
+            if let Some(agg_addr) = self.stack_2mb.deallocate_page(agg_addr) {
+                // we were able to aggregate this page back into a 1gb page, so return it to the 1gb stack
+                self.stack_1gb.deallocate_page(agg_addr);
+            }
         }
     }
 
-    // TODO:
-    pub fn free_page(&mut self, page_type: PageType, address: Address) {
+    pub fn free_page(&self, page_type: PageType, address: Address) {
         match page_type {
             PageType::Page4K => self.free_page_4kb(address),
             PageType::Page2M => self.free_page_2mb(address),
@@ -482,12 +481,14 @@ impl Pager {
             }
 
             // page directory entry is 4kb page...
-            // TODO: this shouldn't have to be mutable, but (confirm this...)
-            // the API for PageTableEntry doesn't have a way to get the address without mutably borrowing the entry
             let pl3_table = &mut *(pl4_entry.addr().as_u64() as *mut PageTable);
             let pl3_entry = &pl3_table[pl3_index];
             if pl3_entry.is_unused() {
                 return None;
+            }
+
+            if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
+                return Some(pl3_entry.addr().as_u64() as usize + (virtual_addr & 0x3FFFFFFF));
             }
 
             // this could be a 2mb page...
@@ -602,6 +603,69 @@ impl Pager {
 
         Ok(())
     }
+
+    fn ensure_mapped_page(&self, virtual_addr: VirtualAddress, page_type: PageType, flags: PageTableFlags) -> Result<bool, &'static str> {
+        let pl4_table = get_pl4_table();
+
+        let pl4_index = (virtual_addr.0 as usize >> 39) & 0o777;
+        let pl3_index = (virtual_addr.0 as usize >> 30) & 0o777;
+        let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
+        let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
+        
+        unsafe {
+            let pl4_entry = &mut pl4_table[pl4_index];
+            if pl4_entry.is_unused() {
+                let new_frame = self.allocate_page_table().ok_or("Couldn't create page table")?;
+                pl4_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+            }
+
+            let pl3_table = &mut *(pl4_entry.addr().as_u64() as *mut PageTable);
+            let pl3_entry = &mut pl3_table[pl3_index];
+            if pl3_entry.is_unused() {
+                if page_type == PageType::Page1G {
+                    pl3_entry.set_addr(PhysAddr::new(self.allocate_1gb_page().ok_or("Couldn't allocate 1GB page")? as u64), 
+                    flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
+                    return Ok(true);
+                }
+                let new_frame = self.allocate_page_table().ok_or("Couldn't create page table")?;
+                pl3_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+            } else if page_type == PageType::Page1G {
+                if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
+                    return Ok(false)
+                } else {
+                    return Err("Virtual address already mapped with a smaller page size");
+                }
+            }
+
+            let pl2_table = &mut *(pl3_entry.addr().as_u64() as *mut PageTable);
+            let pl2_entry = &mut pl2_table[pl2_index];
+            if pl2_entry.is_unused() {
+                if page_type == PageType::Page2M {
+                    pl2_entry.set_addr(PhysAddr::new(self.allocate_2mb_page().ok_or("Couldn't allocate 2MB page")? as u64), 
+                    flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
+                    return Ok(true);
+                }
+                let new_frame = self.allocate_page_table().ok_or("Couldn't create page table")?;
+                pl2_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+            } else if page_type == PageType::Page2M {
+                if pl2_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
+                    return Ok(false)
+                } else {
+                    return Err("Virtual address already mapped with a smaller page size");
+                }
+            }
+
+            let pl1_table = &mut *(pl2_entry.addr().as_u64() as *mut PageTable);
+            let pl1_entry = &mut pl1_table[pl1_index];
+            if !pl1_entry.is_unused() {
+                return Ok(false)
+            }
+
+            pl1_entry.set_addr(PhysAddr::new(self.allocate_4kb_page().ok_or("Couldn't allocate 4KB page")? as u64), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+
+            Ok(true)
+        }
+    } 
 
     pub fn output_mmap(&self) {
         unsafe {

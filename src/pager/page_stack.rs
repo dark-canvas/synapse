@@ -114,7 +114,7 @@ pub trait PageBorrower {
 pub trait PageMapper {
     /// Ok(b) -> address is mapped, b == true means the page was mapped, otherwise it was already mapped
     /// Err -> couldn't map the page..
-    fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,()>;
+    fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,(&'static str)>;
 }
 
 pub struct Stacks<const PAGE_SIZE: usize> 
@@ -160,9 +160,6 @@ pub struct PageStack<const PAGE_SIZE: usize> where [(); {PAGE_SIZE * ADDRESSES_P
     // wrap the whole thing in a mutex?
     // Move the mutex to the caller?
     pub /* TODO (in crate::pager)*/ stacks: Mutex< Stacks<PAGE_SIZE> >,
-    //pub aggregate_map: PageAggregator< {PAGE_SIZE * ADDRESSES_PER_PAGE} >,
-    //borrower: Option<&'a dyn PageBorrower>,
-    //mapper: MAPPER, // if this calls into the pager, then it could call back into the 4kb allocator, so must be done *outside* of the lock
 }
 
 impl<const PAGE_SIZE: usize> PageStack<PAGE_SIZE> 
@@ -183,10 +180,10 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
         }
     }
 
-   // pub fn set_borrow_source(&mut self, borrower: &'a dyn PageBorrower) {
-    //    self.borrower = Some(borrower);
-   // }
-
+    // TODO: mapper isn't currently used... the intent was to allow for the memory backing the 
+    // page stack itself to be dynamically mapped into place
+    // Although; it would never be used in this method since we're just decreasing the available stack
+    // Arguably it could return unuesd pages.
     pub fn allocate_page(&self, mapper: &dyn PageMapper) -> Option<Address> 
     where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
 
@@ -258,11 +255,12 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
     }
         */
 
-    pub fn deallocate_page(&mut self, page_addr: Address) -> Option<Address>
+    // NOTE: it is up to the caller to ensure this page hsa been previously allocated and is the 
+    // proper size for this page stack.
+    pub fn deallocate_page(&self, page_addr: Address) -> Option<Address>
     where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
 
-        // TODO: page align the address
-        // TODO: confirm it was actually allocated
+        // TODO: page align the address)
         let mut stacks_lock = self.stacks.lock();
         let stacks = &mut stacks_lock;
 
@@ -270,10 +268,6 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
 
         let mut result = None;
         if PAGE_SIZE != PAGE_SIZE_1GB {
-            //let aggregate_page_size = PAGE_SIZE * ADDRESSES_PER_PAGE;
-            //let agg_index = (page_addr / aggregate_page_size as Address) as usize;
-            //self.aggregate_map[agg_index].allocated -= 1;
-            //self.aggregate_map[agg_index].available += 1;
             result = stacks.aggregate_map.deallocate(page_addr);
 
             if let Some(bigger_page) = result {
@@ -327,19 +321,6 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
         result
     }
 }
-
-// for Mutex PageStack?  How to hanndle this?
-/*
-impl<'a, MAPPER: PageMapper, const PAGE_SIZE: usize> PageBorrower for PageStack<'a, MAPPER, PAGE_SIZE> {
-    fn borrow_page(&self) -> Option< (Address, usize) > {
-        None
-    }
-
-    fn borrow_specific(&self, address: Address) -> Option< (Address, usize) > {
-        None
-    }
-}
-    */
 
 #[cfg(test)]
 mod tests {
