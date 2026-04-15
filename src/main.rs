@@ -77,8 +77,7 @@ pub extern "C" fn _start() -> ! {
     }
 
     println!("Creating pager...");
-    let mut pager = Pager::new();
-    pager.configure(&config);
+    let mut pager = Pager::new(&config);
 
     //let kernel_info = module_list.get_module_info(0).expect("No kernel module found");
     //let kernel_start = kernel_info.get_start_address();

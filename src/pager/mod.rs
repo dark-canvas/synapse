@@ -183,14 +183,19 @@ impl Pager {
     /// avoid this (and I'm not sure if Rust will actually "move" the return value, or 
     /// construct it in place once on the stack... the former is problematic if there are 
     /// embedded pointers)
-    pub fn new() -> Self {
+    pub fn new(config: &Config) -> Self {
         let (pl4_frame, _flags) = Cr3::read();
         let pl4_addr: PhysAddr = pl4_frame.start_address();
 
-        // TODO: detrermine number of 4kb pages (audit mapped pages or get it from bootloader?)
-        // TODO: create page stacks for 4kb, 2mb and 1gb pages
+        // Ensure the maximum supported memory is not exceeded
+        let mmap = MemoryMap::from_page(config.get_memory_map_address());
+        let last_region = mmap.get_memory_region(mmap.get_num_regions() - 1).expect("Memory map must contain at least one region");
+        let max_physical_address = last_region.get_end_address();
+        assert!( max_physical_address <= PAGER_MAX_SUPPORTED_MEMORY as Address, 
+            "Platform has more physical memory ({:#x}) than the maximum supported by this pager ({:#x})", 
+            max_physical_address, PAGER_MAX_SUPPORTED_MEMORY);
 
-        unsafe {
+        let mut pager = unsafe {
             let pl4_table = &mut *(pl4_frame.start_address().as_u64() as *mut PageTable);
 
             // map into itself for easier virtual to physical mappings
@@ -205,7 +210,9 @@ impl Pager {
                 stack_2mb: PageStack::<PAGE_SIZE_2MB>::new(PAGE_STACK_2MB_BASE, PAGE_STACK_2MB_MAX_PAGES, PAGE_AGGREGATOR_1GB_BASE),
                 stack_4kb: PageStack::<PAGE_SIZE_4KB>::new(PAGE_STACK_4KB_BASE, PAGE_STACK_4KB_MAX_PAGES, PAGE_AGGREGATOR_2MB_BASE),
             }
-        }
+        };
+        pager.configure(config);
+        pager
     }
 
     fn create_page_stack<T, F>(&self, stack: &mut T, pages: PageIterator, new_page: &mut F) 
@@ -237,8 +244,6 @@ impl Pager {
         }
     }
 
-    //fn populate_page_stack<S, A>(&self, stack: &mut S, aggregator: &mut A, pages: PageIterator) 
-    //    where S : SimpleStack<Address> + Index<usize>, A : AddressAggregator {
     fn populate_page_stack<const PAGE_SIZE: usize>(&self, mem: &mut Stacks<PAGE_SIZE>, pages: PageIterator)
     where [(); {PAGE_SIZE*ADDRESSES_PER_PAGE}]: {
         println!("Populating stack with pages...");
@@ -248,7 +253,7 @@ impl Pager {
         }
     }
 
-    pub fn configure(&mut self, config: &Config) {
+    fn configure(&mut self, config: &Config) {
         let module_list = ModuleList::from_page(config.get_module_list_address());
         let mmap = MemoryMap::from_page(config.get_memory_map_address());
 
