@@ -73,9 +73,13 @@ pub const PAGE_SIZE_4KB: usize = 4*1024;
 pub const PAGE_SIZE_2MB: usize = 2*1024*1024;
 pub const PAGE_SIZE_1GB: usize = 1*1024*1024*1024;
 
-pub const PAGE_MASK_4KB: Address = 4*1024-1;
-pub const PAGE_MASK_2MB: Address = 2*1024*1024-1;
-pub const PAGE_MASK_1GB: Address = 1*1024*1024*1024-1;
+pub const PAGE_OFFSET_MASK_4KB: Address = 4*1024-1;
+pub const PAGE_OFFSET_MASK_2MB: Address = 2*1024*1024-1;
+pub const PAGE_OFFSET_MASK_1GB: Address = 1*1024*1024*1024-1;
+
+pub const PAGE_MASK_4KB: Address = !PAGE_OFFSET_MASK_4KB;
+pub const PAGE_MASK_2MB: Address = !PAGE_OFFSET_MASK_2MB;
+pub const PAGE_MASK_1GB: Address = !PAGE_OFFSET_MASK_1GB;
 
 const PHYSICAL_OFFSET: Address = 0xFFFFFF0000000000;
 
@@ -124,6 +128,30 @@ pub fn get_pl4_table() -> &'static mut PageTable {
     }
 }
 
+pub fn is_1gb_aligned(addr: Address) -> bool {
+    addr & PAGE_OFFSET_MASK_1GB == 0
+}
+
+pub fn is_2mb_aligned(addr: Address) -> bool {
+    addr & PAGE_OFFSET_MASK_2MB == 0
+}
+
+pub fn is_4kb_aligned(addr: Address) -> bool {
+    addr & PAGE_OFFSET_MASK_4KB == 0
+}
+
+pub fn next_1gb_page(addr: Address) -> Address {
+    (addr + PAGE_SIZE_1GB as Address) & PAGE_MASK_1GB
+}
+
+pub fn next_2mb_page(addr: Address) -> Address {
+    (addr + PAGE_SIZE_2MB as Address) & PAGE_MASK_2MB
+}
+
+pub fn next_4kb_page(addr: Address) -> Address {
+    (addr + PAGE_SIZE_4KB as Address) & PAGE_MASK_4KB
+}
+
 impl PageMapper for Pager {
     // TODO: Is this the right way to go?
     // This creates a bit of a weird call stack...
@@ -141,9 +169,9 @@ impl PageMapper for Pager {
         let mut pages_mapped = false;
         let mut current_addr = base;
         while current_addr < end {
-            let page_type = if end - current_addr >= PAGE_SIZE_1GB as Address && (current_addr & PAGE_MASK_1GB as Address == 0) {
+            let page_type = if end - current_addr >= PAGE_SIZE_1GB as Address && (current_addr & PAGE_OFFSET_MASK_1GB as Address == 0) {
                 PageType::Page1G
-            } else if end - current_addr >= PAGE_SIZE_2MB as Address && (current_addr & PAGE_MASK_2MB as Address == 0) {
+            } else if end - current_addr >= PAGE_SIZE_2MB as Address && (current_addr & PAGE_OFFSET_MASK_2MB as Address == 0) {
                 PageType::Page2M
             } else {
                 PageType::Page4K

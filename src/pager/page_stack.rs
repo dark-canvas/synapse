@@ -34,9 +34,6 @@
 //!                     Available 0 /
 //! ```
 //!
-//! TODO: need an efficient way to determine if/when all 512 pages from a smaller 
-//! allocator can be returns as a simple big page to the larger allocator.
-//!
 //! NOTE: Most modern AMD64 processors support a 48-bit or 43-bit physical address space.
 //! This would mean that, in order to support the full address space:
 //!  - the 4kb page stack would occupy 2^48 / 2^12 * 8 == 549755813888 (512GB)
@@ -107,9 +104,6 @@ pub trait PageBorrower {
     fn borrow_specific(&self, address: Address) -> Option< (Address, usize) >;
 }
 
-// TODO: this will be implemented by the pager, but will need some form of protection in order to 
-// ensure it can be shared... need to implement some form of mutex
-
 #[cfg_attr(test, automock)]
 pub trait PageMapper {
     /// Ok(b) -> address is mapped, b == true means the page was mapped, otherwise it was already mapped
@@ -167,16 +161,12 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
 
     pub fn new(stack_base: Address, page_count: usize, aggregator_base: Address) -> Self 
     where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
-        // TODO determine where to place these stacks...
-        // Allocate pages for the top and bottom of the stack, but leave the middle unmapped... it'll be mapped on demand
-        // But the on-demand mapping will be intelligent (not requiring a page fault)
-        // NOTE that `page_count` is the maximum number of pages, and the size of the underlying memory, but is supplied as the 
-        // size of both the allocated and available stacks, which means they technically overlap memory, but becaues a page can 
-        // only be in one stack at the same time, they'll never actually collide with each other
+        // Create the page stack using the provided details.
+        // Note that it is assumed that the caller (the pager) has already mapped the minimal amount of 
+        // memory to be funcatonal.  Additionally memory can possibly be mapped/unmapped, on demand, in the 
+        // allocate/deallocate methods.
         PageStack {
             stacks: Mutex::new(Stacks::new(stack_base, page_count, aggregator_base)),
-            //borrower: None,
-            //mapper: mapper,
         }
     }
 
@@ -189,78 +179,24 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
 
         let mut stacks_lock = self.stacks.lock();
         let stacks = &mut stacks_lock;
-        /*
-        if stacks.available_pages.is_empty() {
-            // TOOD: borrow page...
-            if let Some(borrower) = self.borrower {
-                if let Some((page_addr, page_size)) = borrower.borrow_page() {
-                    let num_pages = page_size / PAGE_SIZE;
-                    let top_of_stack = stacks.available_pages.top();
-                    let new_top = top_of_stack + (num_pages * size_of::<Address>()) as Address;
-
-                    // TODO: if this calls into the pager, it could allocate new 4kb pages, which could be 
-                    // calling back into this very same page stack (creating a dead lock?  Depends on whether spinlock is recursive)
-                    // self.mapper.ensure_mapped(top_of_stack, new_top).unwrap();
-
-                    for i in 0..num_pages {
-                        stacks.available_pages.push(page_addr + (i * PAGE_SIZE) as Address);
-                    }
-                }
-            }
-        }
-            */
-        //drop(available_pages_lock);
 
         if stacks.available_pages.is_empty() {
             None
         } else {
             let page = stacks.available_pages.pop().unwrap();
             stacks.aggregate_map.allocate(page);
-            // allocated is an expand down stack...
-            //let top_of_stack = stacks.allocated_pages.top();
-            //let new_top = top_of_stack - size_of::<Address>() as Address;
-            //mapper.ensure_mapped(new_top, top_of_stack).unwrap();
-            //stacks.allocated_pages.push(page);
             Some(page)
         }
     }
 
-    /*
-    pub fn allocate_specific(&mut self, page_addr: Address) -> Option<Address> {
-        // TODO: ensure alignment of page_addr
-
-        // check if this page is in the available portion of our stack
-        // if not, try to borrow it (which will result in other pages being returned)
-        let mut stacks_lock = self.stacks.lock();
-        let stacks = &mut stacks_lock;
-        if let Some(index) = stacks.available_pages.find(page_addr) {
-            stacks.available_pages.remove_index(index);
-            stacks.allocated_pages.push(page_addr);
-            return Some(page_addr);
-        } else if let Some(borrower) = self.borrower {
-            if let Some( (base_address, size) ) = borrower.borrow_specific(page_addr) {
-                let num_pages = size/PAGE_SIZE;
-                // TODO: ensure mapped
-                // self.mapper.ensure_mapped(base_address, base_address + size).unwrap();
-                for i in 0..num_pages {
-                    let new_page = base_address + (i * PAGE_SIZE) as Address;
-                    if new_page != page_addr {
-                        stacks.available_pages.push(new_page);
-                    }
-                }
-            }
-        }
-
-        None
-    }
-        */
-
-    // NOTE: it is up to the caller to ensure this page hsa been previously allocated and is the 
+    // NOTE: it is up to the caller to ensure this page has been previously allocated and is the 
     // proper size for this page stack.
     pub fn deallocate_page(&self, page_addr: Address) -> Option<Address>
     where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
 
-        // TODO: page align the address)
+        // align the page address to the page size, just in case
+        let page_addr = page_addr & !(PAGE_SIZE as Address - 1);
+
         let mut stacks_lock = self.stacks.lock();
         let stacks = &mut stacks_lock;
 
@@ -334,41 +270,6 @@ mod tests {
         let ps = PageStack::<4096>::new(0x1000, 0, 0x2000);
         // TODO: what can we assert here?
     }
-
-    /*
-    #[test]
-    fn test_borrow() {
-        const pages: usize = 10;
-        const guard_band: u64 = 0x1122334455667788;
-
-        let mut borrower = MockPageBorrower::new();
-        let mut mapper = MockPageMapper::new();
-        let mut stack_memory = [0u64; pages];
-        let stack_memory_base = stack_memory.as_ptr() as Address;
-        let stack_end_after_additions = ptr::addr_of!(stack_memory[4]) as Address;
-
-        mapper.expect_ensure_mapped()
-            .times(1)
-            .with(predicate::eq(stack_memory_base), predicate::eq(stack_end_after_additions))
-            .return_const(Ok(false));
-
-        borrower.expect_borrow_page()
-            .times(1)
-            .return_const(Some((0x1000, 4*4096)));
-
-        let mut ps = PageStack::< _, 4096>::new(mapper, stack_memory_base, pages);
-        ps.set_borrow_source(&borrower);
-
-        stack_memory[4] = guard_band;
-        ps.allocate_page();
-
-        assert_eq!(stack_memory[0], 0x1000);
-        assert_eq!(stack_memory[1], 0x2000);
-        assert_eq!(stack_memory[2], 0x3000);
-        assert_eq!(stack_memory[3], 0x4000);
-        assert_eq!(stack_memory[4], guard_band)
-    }
-    */
 
     #[test]
     fn test_aggregator() {
