@@ -1,34 +1,9 @@
 use crate::types::Address;
 use satus_struct::memory_map::{MemoryMap, MemoryRegionType};
 
-use super::{PAGE_SIZE_4KB, PAGE_SIZE_2MB, PAGE_SIZE_1GB, PAGE_MASK_4KB, PAGE_MASK_2MB, PAGE_MASK_1GB};
-
-// TODO: move to a common/helper module?
-// TODO: these are now "is_x_page_aligned" functions
-// TODO: add actual is_x_page function
-fn is_1gb_page(addr: Address) -> bool {
-    addr & PAGE_MASK_1GB == 0
-}
-
-fn is_2mb_page(addr: Address) -> bool {
-    addr & PAGE_MASK_2MB == 0 //&& !is_1gb_page(addr)
-}
-
-fn is_4kb_page(addr: Address) -> bool {
-    addr & PAGE_MASK_4KB == 0 //&& !is_2mb_page(addr) && !is_1gb_page(addr)
-}
-
-fn next_1gb_page(addr: Address) -> Address {
-    (addr + PAGE_SIZE_1GB as Address) & !PAGE_MASK_1GB
-}
-
-fn next_2mb_page(addr: Address) -> Address {
-    (addr + PAGE_SIZE_2MB as Address) & !PAGE_MASK_2MB
-}
-
-fn next_4kb_page(addr: Address) -> Address {
-    (addr + PAGE_SIZE_4KB as Address) & !PAGE_MASK_4KB
-}
+use super::{PAGE_SIZE_4KB, PAGE_SIZE_2MB, PAGE_SIZE_1GB};
+use super::{is_1gb_aligned, is_2mb_aligned, is_4kb_aligned};
+use super::{next_1gb_page, next_2mb_page, next_4kb_page};
 
 /// A struct that can be used to iterate over an mmap and return memory in its largest possible page sizes, 
 /// while also allowing for filtering by region type and base address, and excluding specific page ranges 
@@ -112,10 +87,7 @@ impl<'a> PageIterator<'a> {
         let mut start_page = start_page;
         let num_regions = self.mmap.get_num_regions();
 
-        //println!("Iterating page stack for page size 0x{:x}, starting at region {}, page 0x{:x?}", self.page_size, current_region, start_page);
-
         for i in current_region..num_regions {
-            //current_region = i;
             let region = self.mmap.get_memory_region(i).unwrap();
 
             if let Some(region_type) = self.region_type {
@@ -139,45 +111,41 @@ impl<'a> PageIterator<'a> {
 
             while current < end  && current + PAGE_SIZE_4KB as Address <= end {
                 // skip past any 1gb pages
-                while is_1gb_page(current) && next_1gb_page(current) <= end {
+                while is_1gb_aligned(current) && next_1gb_page(current) <= end {
                     let next = next_1gb_page(current);
                     if self.page_size == PAGE_SIZE_1GB as Address && self.passes_filters(current) {
-                        //println!("  Returning 0x{:x}", current);
                         return (i, next, Some(current));
                     }
                     current = next;
                 }
 
                 // skip past any 2mb pages
-                // TODO: if we find a 1GB aligned page we must break and restart...
-                while is_2mb_page(current) && next_2mb_page(current) <= end {
-                    if is_1gb_page(current) && next_1gb_page(current) <= end {
+                // if we find a 1GB aligned page we must break and restart...
+                while is_2mb_aligned(current) && next_2mb_page(current) <= end {
+                    if is_1gb_aligned(current) && next_1gb_page(current) <= end {
                         break;
                     }
 
                     let next = next_2mb_page(current);
                     if self.page_size == PAGE_SIZE_2MB as Address && self.passes_filters(current) {
-                        //println!("  Returning 0x{:x}", current);
                         return (i, next, Some(current));
                     }
                     current = next;
                 }
 
-                while is_4kb_page(current) && next_4kb_page(current) <= end {
-                    if is_2mb_page(current) && next_2mb_page(current) <= end {
+                while is_4kb_aligned(current) && next_4kb_page(current) <= end {
+                    if is_2mb_aligned(current) && next_2mb_page(current) <= end {
                         break;
                     }
 
                     let next = next_4kb_page(current);
                     if self.page_size == PAGE_SIZE_4KB as Address && self.passes_filters(current){
-                        //println!("  Returning 0x{:x}", current);
                         return (i, next, Some(current));
                     }
                     current = next;
                 }
             }
         }
-        //println!("  Returning None");
         return (0, 0, None);
     }
 }

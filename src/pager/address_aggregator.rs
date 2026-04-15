@@ -31,7 +31,6 @@ pub struct PageAggregator<const PAGE_SIZE: usize> {
 
 impl<const PAGE_SIZE: usize>  PageAggregator<PAGE_SIZE> {
     pub fn new(aggregate_map_base: Address, num_buckets: usize) -> Self {
-        // TODO: we can't assume this is mapped yet!
         //unsafe {
         //    core::ptr::write_bytes(aggregate_map_base as *mut u8, 0, core::mem::size_of::<PageBucket>() * num_buckets);
         //}
