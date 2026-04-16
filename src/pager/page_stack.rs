@@ -80,6 +80,7 @@ use mockall::predicate::*;
 use core::ptr;
 use crate::stack::{Stack, SimpleStack, EXPAND_UP, EXPAND_DOWN};
 use crate::types::Address;
+use crate::pager::PageIterator;
 
 use spin::Mutex;
 use super::address_aggregator::{AddressAggregator, PageAggregator, PageBucket};
@@ -121,15 +122,20 @@ where [(); {PAGE_SIZE*ADDRESSES_PER_PAGE}] : {
 // TODO: this should be private
 impl<const PAGE_SIZE: usize> Stacks<PAGE_SIZE>
 where [(); {PAGE_SIZE*ADDRESSES_PER_PAGE}]: {
-    fn new(stack_base: Address, page_count: usize, aggregator_base: Address) -> Self 
+    fn new(stack_base: Address, page_count: usize, aggregator_base: Address, pages: PageIterator) -> Self 
     where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
-        Stacks {
-            //allocated_pages: Stack::<Address, EXPAND_DOWN>::new(stack_base + (page_count * size_of::<Address>()) as Address, page_count),
-            available_pages: Stack::<Address, EXPAND_UP>::new(stack_base, page_count),
-            aggregate_map: PageAggregator::<{PAGE_SIZE * ADDRESSES_PER_PAGE}>::new(
+        let mut available_pages = Stack::<Address, EXPAND_UP>::new(stack_base, page_count);
+        let mut aggregate_map = PageAggregator::<{PAGE_SIZE * ADDRESSES_PER_PAGE}>::new(
                 aggregator_base,
-                page_count / ADDRESSES_PER_PAGE),
+                page_count / ADDRESSES_PER_PAGE);
 
+        for page in pages {
+            available_pages.push(page);
+            aggregate_map.mark_available(page);
+        }
+        Stacks {
+            available_pages,
+            aggregate_map,
         }
     }
 }
@@ -159,14 +165,14 @@ pub struct PageStack<const PAGE_SIZE: usize> where [(); {PAGE_SIZE * ADDRESSES_P
 impl<const PAGE_SIZE: usize> PageStack<PAGE_SIZE> 
 where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
 
-    pub fn new(stack_base: Address, page_count: usize, aggregator_base: Address) -> Self 
+    pub fn new(stack_base: Address, page_count: usize, aggregator_base: Address, pages: PageIterator) -> Self 
     where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
         // Create the page stack using the provided details.
         // Note that it is assumed that the caller (the pager) has already mapped the minimal amount of 
         // memory to be funcatonal.  Additionally memory can possibly be mapped/unmapped, on demand, in the 
         // allocate/deallocate methods.
         PageStack {
-            stacks: Mutex::new(Stacks::new(stack_base, page_count, aggregator_base)),
+            stacks: Mutex::new(Stacks::new(stack_base, page_count, aggregator_base, pages)),
         }
     }
 
