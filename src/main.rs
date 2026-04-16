@@ -16,8 +16,6 @@ use types::Address;
 use core::arch::asm;
 use core::panic::PanicInfo;
 
-// TODO: add multiboot header, and a stub to switch to long mode and call into kernel entry
-
 extern crate satus_struct;
 use satus_struct::config::Config;
 use satus_struct::module_list::ModuleList;
@@ -90,10 +88,6 @@ pub extern "C" fn _start() -> ! {
         }
     }
 
-    // Need to find a way to make this work.... this complains that a second mutable borrow is occuring here, 
-    // because (I believe) the `configure` call above creates references in the pager to itself and so 
-    // creates a mutable borrow that is still active (active for the lifetime of the pager)
-    
     pager.allocate_page(pager::PageType::Page4K);
 
     let framebuffer = config.get_framebuffer_address() as *mut u8;

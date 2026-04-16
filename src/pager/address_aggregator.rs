@@ -6,6 +6,7 @@
 //! so the larger page can be returned to the larger stack.
 
 use crate::types::Address;
+use core::ptr;
 
 #[derive(Copy, Clone)]
 pub struct PageBucket {
@@ -31,9 +32,9 @@ pub struct PageAggregator<const PAGE_SIZE: usize> {
 
 impl<const PAGE_SIZE: usize>  PageAggregator<PAGE_SIZE> {
     pub fn new(aggregate_map_base: Address, num_buckets: usize) -> Self {
-        //unsafe {
-        //    core::ptr::write_bytes(aggregate_map_base as *mut u8, 0, core::mem::size_of::<PageBucket>() * num_buckets);
-        //}
+        unsafe {
+            core::ptr::write_bytes(aggregate_map_base as *mut u8, 0, core::mem::size_of::<PageBucket>() * num_buckets);
+        }
         PageAggregator {
             aggregate_map: unsafe { core::slice::from_raw_parts_mut(aggregate_map_base as *mut PageBucket, num_buckets) }
         }
