@@ -77,13 +77,11 @@ use mockall::*;
 #[cfg(test)]
 use mockall::predicate::*;
 
-use core::ptr;
-use crate::stack::{Stack, SimpleStack, EXPAND_UP, EXPAND_DOWN};
+use crate::stack::{Stack, SimpleStack, EXPAND_UP};
 use crate::types::Address;
 use crate::pager::PageIterator;
 
-use spin::Mutex;
-use super::address_aggregator::{AddressAggregator, PageAggregator, PageBucket};
+use super::address_aggregator::{AddressAggregator, PageAggregator};
 
 use super::PAGE_SIZE_1GB;
 pub const ADDRESSES_PER_PAGE: usize = 512; // make this a const in pager?
@@ -93,23 +91,13 @@ enum Search {
     Continue(usize),
     Match(usize),
 }
-// These traits must use interior mutability to accomplish their goals, as the 
-// interfaces are intentionally non-mut
 
-#[cfg_attr(test, automock)]
-pub trait PageBorrower {
-    // borrow a page from another source
-    // Returns a address, representing a page, and the size of the page
-    fn borrow_page(&self) -> Option< (Address, usize) >;
-
-    fn borrow_specific(&self, address: Address) -> Option< (Address, usize) >;
-}
-
+#[allow(dead_code)]
 #[cfg_attr(test, automock)]
 pub trait PageMapper {
     /// Ok(b) -> address is mapped, b == true means the page was mapped, otherwise it was already mapped
     /// Err -> couldn't map the page..
-    fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,(&'static str)>;
+    fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool, &'static str>;
 }
 
 // How to prevent double frees?
@@ -117,16 +105,18 @@ pub trait PageMapper {
 //   - allocate a 2mb page, but free it as a 4kb page?  Leaks memory)
 //   - allocate a 4kb page, but free it as a 2mb page?  (frees memory that could be in use)
 //     - iterate the page tables to ensure that the page in question is of the corret size before freeing
-pub(crate) struct PageStack<const PAGE_SIZE: usize> where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}]: {
+pub(crate) struct PageStack<const PAGE_SIZE: usize> 
+where [(); PAGE_SIZE * ADDRESSES_PER_PAGE]: {
     pub(crate) available_pages: Stack<'static, Address, EXPAND_UP>,
     pub(crate) aggregate_map: PageAggregator< {PAGE_SIZE*ADDRESSES_PER_PAGE} >,
 }
 
+#[allow(dead_code)]
 impl<const PAGE_SIZE: usize> PageStack<PAGE_SIZE> 
-where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
+where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
     pub fn new(stack_base: Address, page_count: usize, aggregator_base: Address, pages: PageIterator) -> Self 
-    where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
+    where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
         let mut available_pages = Stack::<Address, EXPAND_UP>::new(stack_base, page_count);
         let mut aggregate_map = PageAggregator::<{PAGE_SIZE * ADDRESSES_PER_PAGE}>::new(
                 aggregator_base,
@@ -147,7 +137,7 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
     // Although; it would never be used in this method since we're just decreasing the available stack
     // Arguably it could return unuesd pages.
     pub fn allocate_page(&mut self, mapper: &dyn PageMapper) -> Option<Address> 
-    where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
+    where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
         if self.available_pages.is_empty() {
             None
@@ -161,7 +151,7 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
     // NOTE: it is up to the caller to ensure this page has been previously allocated and is the 
     // proper size for this page stack.
     pub fn deallocate_page(&mut self, page_addr: Address) -> Option<Address>
-    where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
+    where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
         // align the page address to the page size, just in case
         let page_addr = page_addr & !(PAGE_SIZE as Address - 1);

@@ -1,6 +1,6 @@
 #![no_std]
-#![feature(generic_const_exprs)]
 #![cfg_attr(not(test), no_main)]
+#![feature(generic_const_exprs)]
 
 #[cfg(test)]
 extern crate std;
@@ -31,23 +31,6 @@ fn panic(info: &PanicInfo) -> ! {
     loop {}
 }
 
-fn get_aligned_pages_between(page_size: usize, start: Address, end: Address ) -> usize {
-    // first the first 2mb aligned address within the region
-    let page_size = page_size as Address;
-    let first_aligned = match start & (page_size - 1) {
-        i if i > 0 => start - i + page_size,
-        _ => start
-    };
-
-    // find the last 2mb aligned address within the region
-    let last_aligned = match end & (page_size - 1) {
-        i if i > 0 => end - i,
-        _ => end
-    };
-
-    ((last_aligned - first_aligned) / page_size) as usize
-}
-
 #[cfg(not(test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
@@ -75,7 +58,7 @@ pub extern "C" fn _start() -> ! {
     }
 
     println!("Creating pager...");
-    let mut pager = Pager::new(&config);
+    let pager = Pager::new(&config);
 
     //let kernel_info = module_list.get_module_info(0).expect("No kernel module found");
     //let kernel_start = kernel_info.get_start_address();

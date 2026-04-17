@@ -41,9 +41,6 @@ pub mod page_stack;
 pub mod page_iterator;
 pub mod address_aggregator;
 
-use core::ops::Index; 
-use core::ptr;
-
 use spin::Mutex;
 
 use x86_64::registers::control::Cr3;
@@ -60,8 +57,6 @@ use satus_struct::memory_map::{MemoryMap, MemoryRegionType};
 use crate::types::Address;
 use crate::stack::SimpleStack;
 use self::page_stack::{PageStack, PageMapper};
-use self::address_aggregator::AddressAggregator;
-use self::page_stack::ADDRESSES_PER_PAGE;
 use self::page_iterator::PageIterator;
 
 pub const PAGER_MAX_SUPPORTED_MEMORY: usize = 512*1024*1024*1024; // 512GB
@@ -110,10 +105,6 @@ pub enum SizedPage {
     Page2M(Address),
     Page1G(Address),
 }
-
-type PageAllocator = fn() -> Result< Address, &'static str>;
-// Not sure if the error string is actually useful here
-type CreatePageTable = fn() -> Result< PhysFrame::<Size4KiB>, &'static str>;
 
 pub struct Pager {
     stack_1gb: Mutex< PageStack::<PAGE_SIZE_1GB> >,
@@ -194,6 +185,7 @@ impl PageMapper for Pager {
     }
 }
 
+#[allow(dead_code)]
 impl Pager {
 
     fn map_in_page_aggregator_memory(four_kb_page_allocator: &mut PageIterator, two_mb_page_allocator: &mut PageIterator) {
@@ -218,19 +210,19 @@ impl Pager {
             two_mb_aggregator_base_physical, 
             VirtualAddress(PAGE_AGGREGATOR_2MB_BASE), 
             PageType::Page2M,
-            PageTableFlags::WRITABLE, &mut create_page_table);
+            PageTableFlags::WRITABLE, &mut create_page_table).expect("2MB page for 2MB page aggregator");
         // 1gb aggregator == 4kb page
         Self::_map_physical_to_virtual( 
             one_gb_aggregator_base_physical,
             VirtualAddress(PAGE_AGGREGATOR_1GB_BASE), 
             PageType::Page4K,
-            PageTableFlags::WRITABLE, &mut create_page_table);
+            PageTableFlags::WRITABLE, &mut create_page_table).expect("4KB page for 1GB page aggregator");
         // 512gb aggregator == 4kb page
         Self::_map_physical_to_virtual( 
             five_twelve_gb_allocator_base_physical, 
             VirtualAddress(PAGE_AGGREGATOR_512GB_BASE), 
             PageType::Page4K,
-            PageTableFlags::WRITABLE, &mut create_page_table);
+            PageTableFlags::WRITABLE, &mut create_page_table).expect("4KB page for 512GB page aggregator");
     }
 
     fn map_in_page_stacks_memory(
@@ -345,15 +337,15 @@ impl Pager {
         // The act of creating the page stacks will have consumed some of the available 4kb pages, so we need to
         // exclude those from the page iterator we use to populate the 4kb stack, otherwise we'll end up pushing 
         // pages onto the stack which could be in ues as page tables/dircetories, or mapped in to the page stack itself.
-        let mut available_1gb_pages = PageIterator::new(&mmap, PAGE_SIZE_1GB)
+        let available_1gb_pages = PageIterator::new(&mmap, PAGE_SIZE_1GB)
                 .with_region_type(MemoryRegionType::Available);
         
-        let mut available_2mb_pages = PageIterator::new(&mmap, PAGE_SIZE_2MB)
+        let available_2mb_pages = PageIterator::new(&mmap, PAGE_SIZE_2MB)
                 .with_region_type(MemoryRegionType::Available)
                 .with_base_address(
                     two_mb_page_allocator.get_current().unwrap_or(0));
         
-        let mut available_4kb_pages = PageIterator::new(&mmap, PAGE_SIZE_4KB)
+        let available_4kb_pages = PageIterator::new(&mmap, PAGE_SIZE_4KB)
                 .with_region_type(MemoryRegionType::Available)
                 .excluding_range(
                     required_base, 
@@ -472,8 +464,7 @@ impl Pager {
         let pl1_index = (virtual_addr >> 12) & 0o777;
 
         unsafe {
-            let (pl4_frame, _flags) = Cr3::read();
-            let pl4_table = & *(pl4_frame.start_address().as_u64() as *const PageTable);
+            let pl4_table = get_pl4_table();
 
             let pl4_entry = &pl4_table[pl4_index];
             if pl4_entry.is_unused() {
@@ -551,8 +542,7 @@ impl Pager {
         println!("Mapping physical address {:x} to virtual address {:x} with flags {:?}", phys_addr, virtual_addr, flags);
 
         unsafe {
-            let (pl4_frame, _flags) = Cr3::read();
-            let pl4_table = &mut *(pl4_frame.start_address().as_u64() as *mut PageTable);
+            let pl4_table = get_pl4_table();
 
             let pl4_entry = &mut pl4_table[pl4_index];
             if pl4_entry.is_unused() {
@@ -668,20 +658,19 @@ impl Pager {
 
     pub fn output_mmap(&self) {
         unsafe {
-            let (pl4_frame, _flags) = Cr3::read();
-            let pl4_table = & *(pl4_frame.start_address().as_u64() as *const PageTable);
+            let pl4_table = get_pl4_table();
 
-            for (i, entry) in pl4_table.iter().enumerate() {
+            for (_i, entry) in pl4_table.iter().enumerate() {
                 if !entry.is_unused() {
                     //info!("pl4 Entry {}: {:?}", i, entry);
 
                     let page_table = &mut *(entry.addr().as_u64() as *mut PageTable);
-                    for (j, entry) in page_table.iter().enumerate() {
+                    for (_j, entry) in page_table.iter().enumerate() {
                         if !entry.is_unused() {
                             //info!("  Page Table Entry {}: {:?}", j, entry);
 
                             let page_table_2 = &mut *(entry.addr().as_u64() as *mut PageTable);
-                            for (k, entry) in page_table_2.iter().enumerate() {
+                            for (_k, entry) in page_table_2.iter().enumerate() {
                                 if !entry.is_unused() {
                                     //info!("    Page Table 2 Entry {}: {:?}", k, entry);
                                 }
