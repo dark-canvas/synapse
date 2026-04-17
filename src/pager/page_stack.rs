@@ -112,17 +112,20 @@ pub trait PageMapper {
     fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool,(&'static str)>;
 }
 
-pub struct Stacks<const PAGE_SIZE: usize> 
-where [(); {PAGE_SIZE*ADDRESSES_PER_PAGE}] : {
-    //pub /* TODO (in crate::pager)*/ allocated_pages: Stack<'static, Address, EXPAND_DOWN>,
-    pub /* TODO (in crate::pager)*/ available_pages: Stack<'static, Address, EXPAND_UP>,
-    pub /* TODO (in crate::pager)*/ aggregate_map: PageAggregator< {PAGE_SIZE*ADDRESSES_PER_PAGE} >,
+// How to prevent double frees?
+// How to prevent asymmetric free i.e., 
+//   - allocate a 2mb page, but free it as a 4kb page?  Leaks memory)
+//   - allocate a 4kb page, but free it as a 2mb page?  (frees memory that could be in use)
+//     - iterate the page tables to ensure that the page in question is of the corret size before freeing
+pub(crate) struct PageStack<const PAGE_SIZE: usize> where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}]: {
+    pub(crate) available_pages: Stack<'static, Address, EXPAND_UP>,
+    pub(crate) aggregate_map: PageAggregator< {PAGE_SIZE*ADDRESSES_PER_PAGE} >,
 }
 
-// TODO: this should be private
-impl<const PAGE_SIZE: usize> Stacks<PAGE_SIZE>
-where [(); {PAGE_SIZE*ADDRESSES_PER_PAGE}]: {
-    fn new(stack_base: Address, page_count: usize, aggregator_base: Address, pages: PageIterator) -> Self 
+impl<const PAGE_SIZE: usize> PageStack<PAGE_SIZE> 
+where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
+
+    pub fn new(stack_base: Address, page_count: usize, aggregator_base: Address, pages: PageIterator) -> Self 
     where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
         let mut available_pages = Stack::<Address, EXPAND_UP>::new(stack_base, page_count);
         let mut aggregate_map = PageAggregator::<{PAGE_SIZE * ADDRESSES_PER_PAGE}>::new(
@@ -133,46 +136,9 @@ where [(); {PAGE_SIZE*ADDRESSES_PER_PAGE}]: {
             available_pages.push(page);
             aggregate_map.mark_available(page);
         }
-        Stacks {
+        PageStack {
             available_pages,
             aggregate_map,
-        }
-    }
-}
-
-
-
-
-// need a mutex to wrap allocated/available pages... can it wrap both?  
-// Or separate mutexes for each, and use `allocated_pages` only for debug?  (disable for production)
-// How to prevent double frees?
-// How to prevent asymmetric free i.e., 
-//   - allocate a 2mb page, but free it as a 4kb page?  Leaks memory)
-//   - allocate a 4kb page, but free it as a 2mb page?  (frees memory that could be in use)
-//     - iterate the page tables to ensure that the page in question is of the corret size before freeing
-pub struct PageStack<const PAGE_SIZE: usize> where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}]: {
-    // Do we even need to track allocated pages?  If available pages is kept sorted (which could be a requirement to 
-    // return larger pages to larger pack stacks) then determining double frees is just a matter of ensuring it isn't 
-    // already in the available stack.
-    // Also keeping available pages sorted allows for merging of adjacent pages into larger pages when they are returned to the stack.
-    // Ultimately, determining/preventing double frees should actually be on the programmer, not the OS... it *SHOULD* 
-    // be preventable without additionala support from the OS.
-    // wrap the whole thing in a mutex?
-    // Move the mutex to the caller?
-    pub /* TODO (in crate::pager)*/ stacks: Mutex< Stacks<PAGE_SIZE> >,
-}
-
-impl<const PAGE_SIZE: usize> PageStack<PAGE_SIZE> 
-where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
-
-    pub fn new(stack_base: Address, page_count: usize, aggregator_base: Address, pages: PageIterator) -> Self 
-    where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
-        // Create the page stack using the provided details.
-        // Note that it is assumed that the caller (the pager) has already mapped the minimal amount of 
-        // memory to be funcatonal.  Additionally memory can possibly be mapped/unmapped, on demand, in the 
-        // allocate/deallocate methods.
-        PageStack {
-            stacks: Mutex::new(Stacks::new(stack_base, page_count, aggregator_base, pages)),
         }
     }
 
@@ -180,37 +146,31 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
     // page stack itself to be dynamically mapped into place
     // Although; it would never be used in this method since we're just decreasing the available stack
     // Arguably it could return unuesd pages.
-    pub fn allocate_page(&self, mapper: &dyn PageMapper) -> Option<Address> 
+    pub fn allocate_page(&mut self, mapper: &dyn PageMapper) -> Option<Address> 
     where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
 
-        let mut stacks_lock = self.stacks.lock();
-        let stacks = &mut stacks_lock;
-
-        if stacks.available_pages.is_empty() {
+        if self.available_pages.is_empty() {
             None
         } else {
-            let page = stacks.available_pages.pop().unwrap();
-            stacks.aggregate_map.allocate(page);
+            let page = self.available_pages.pop().unwrap();
+            self.aggregate_map.allocate(page);
             Some(page)
         }
     }
 
     // NOTE: it is up to the caller to ensure this page has been previously allocated and is the 
     // proper size for this page stack.
-    pub fn deallocate_page(&self, page_addr: Address) -> Option<Address>
+    pub fn deallocate_page(&mut self, page_addr: Address) -> Option<Address>
     where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
 
         // align the page address to the page size, just in case
         let page_addr = page_addr & !(PAGE_SIZE as Address - 1);
 
-        let mut stacks_lock = self.stacks.lock();
-        let stacks = &mut stacks_lock;
-
-        stacks.available_pages.push(page_addr);
+        self.available_pages.push(page_addr);
 
         let mut result = None;
         if PAGE_SIZE != PAGE_SIZE_1GB {
-            result = stacks.aggregate_map.deallocate(page_addr);
+            result = self.aggregate_map.deallocate(page_addr);
 
             if let Some(bigger_page) = result {
                 let bigger_page_size = (PAGE_SIZE * ADDRESSES_PER_PAGE) as Address;
@@ -225,13 +185,14 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
                 // from bottom seearches for pages to remove
                 // from top searches for pages that belong (to swap with the ones from the bottom)
                 let mut from_bottom_index = Search::Continue(0);
-                let mut from_top_index = Search::Continue(stacks.available_pages.len() - 1);
+                let mut from_top_index = Search::Continue(self.available_pages.len() - 1);
                 // TODO: get_unchecked() since we know it's within range?
+                // TODO: UT!
                 // Or create iterators for this purpose?
                 while from_bottom_index < from_top_index {
                     from_bottom_index = match from_bottom_index {
                         Search::Continue(i) => {
-                            if is_within(stacks.available_pages.get(i).unwrap()) {
+                            if is_within(self.available_pages.get(i).unwrap()) {
                                 Search::Match(i)
                             } else {
                                 Search::Continue(i+1)
@@ -242,7 +203,7 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
 
                     from_top_index = match from_top_index {
                         Search::Continue(i) => {
-                            if !is_within(stacks.available_pages.get(i).unwrap()) {
+                            if !is_within(self.available_pages.get(i).unwrap()) {
                                 Search::Match(i)
                             } else {
                                 Search::Continue(i-1)
@@ -253,7 +214,7 @@ where [(); {PAGE_SIZE * ADDRESSES_PER_PAGE}] : {
 
                     if let Search::Match(i) = from_bottom_index &&
                        let Search::Match(j) = from_top_index {
-                        stacks.available_pages.swap(i, j);
+                        self.available_pages.swap(i, j);
                         from_bottom_index = Search::Continue(i+1);
                         from_top_index = Search::Continue(j-1);
                     }
