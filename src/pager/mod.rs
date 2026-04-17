@@ -44,6 +44,8 @@ pub mod address_aggregator;
 use core::ops::Index; 
 use core::ptr;
 
+use spin::Mutex;
+
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::Size4KiB;
 use x86_64::structures::paging::PhysFrame;
@@ -59,7 +61,6 @@ use crate::types::Address;
 use crate::stack::SimpleStack;
 use self::page_stack::{PageStack, PageMapper};
 use self::address_aggregator::AddressAggregator;
-use self::page_stack::Stacks;
 use self::page_stack::ADDRESSES_PER_PAGE;
 use self::page_iterator::PageIterator;
 
@@ -115,9 +116,9 @@ type PageAllocator = fn() -> Result< Address, &'static str>;
 type CreatePageTable = fn() -> Result< PhysFrame::<Size4KiB>, &'static str>;
 
 pub struct Pager {
-    stack_1gb: PageStack::<PAGE_SIZE_1GB>,
-    stack_2mb: PageStack::<PAGE_SIZE_2MB>,
-    stack_4kb: PageStack::<PAGE_SIZE_4KB>,
+    stack_1gb: Mutex< PageStack::<PAGE_SIZE_1GB> >,
+    stack_2mb: Mutex< PageStack::<PAGE_SIZE_2MB> >,
+    stack_4kb: Mutex< PageStack::<PAGE_SIZE_4KB> >,
 }
 
 pub fn pages_required(size: usize) -> usize {
@@ -367,29 +368,31 @@ impl Pager {
             // Or... map all of physical memory, identity mapped into the second last pl4 entry
 
             Pager { 
-                // TODO: rename?  This isn't just a page stack, it's also possibly an aggregator?
-                // TODO: borrow available_*_pages?
-                stack_1gb: PageStack::<PAGE_SIZE_1GB>::new(PAGE_STACK_1GB_BASE, PAGE_STACK_1GB_MAX_PAGES, PAGE_AGGREGATOR_512GB_BASE,
-                    available_1gb_pages),
-                stack_2mb: PageStack::<PAGE_SIZE_2MB>::new(PAGE_STACK_2MB_BASE, PAGE_STACK_2MB_MAX_PAGES, PAGE_AGGREGATOR_1GB_BASE,
-                    available_2mb_pages),
-                stack_4kb: PageStack::<PAGE_SIZE_4KB>::new(PAGE_STACK_4KB_BASE, PAGE_STACK_4KB_MAX_PAGES, PAGE_AGGREGATOR_2MB_BASE,
-                    available_4kb_pages),
+                stack_1gb: Mutex::new( 
+                    PageStack::<PAGE_SIZE_1GB>::new(PAGE_STACK_1GB_BASE, PAGE_STACK_1GB_MAX_PAGES, PAGE_AGGREGATOR_512GB_BASE,
+                        available_1gb_pages) ),
+                stack_2mb: Mutex::new(
+                    PageStack::<PAGE_SIZE_2MB>::new(PAGE_STACK_2MB_BASE, PAGE_STACK_2MB_MAX_PAGES, PAGE_AGGREGATOR_1GB_BASE,
+                        available_2mb_pages) ),
+                stack_4kb: Mutex::new( 
+                    PageStack::<PAGE_SIZE_4KB>::new(PAGE_STACK_4KB_BASE, PAGE_STACK_4KB_MAX_PAGES, PAGE_AGGREGATOR_2MB_BASE,
+                        available_4kb_pages) ),
             }
         }
     }
 
     pub fn allocate_1gb_page(&self) -> Option<Address> {
-        self.stack_1gb.allocate_page(self)
+        self.stack_1gb.lock().allocate_page(self)
     }
 
     pub fn allocate_2mb_page(&self) -> Option<Address> {
-        match self.stack_2mb.allocate_page(self) {
+        match self.stack_2mb.lock().allocate_page(self) {
             Some(addr) => Some(addr),
             None => {
-                if let Some(addr) = self.stack_1gb.allocate_page(self) {
+                if let Some(addr) = self.stack_1gb.lock().allocate_page(self) {
+                    let mut stack_2mb = self.stack_2mb.lock();
                     for i in 1..512 {
-                        self.stack_2mb.stacks.lock().available_pages.push(addr + (i*PAGE_SIZE_2MB) as Address);
+                        stack_2mb.available_pages.push(addr + (i*PAGE_SIZE_2MB) as Address);
                     }
                     Some(addr)
                 } else {
@@ -400,12 +403,13 @@ impl Pager {
     }
 
     pub fn allocate_4kb_page(&self) -> Option<Address> {
-        match self.stack_4kb.allocate_page(self) {
+        match self.stack_4kb.lock().allocate_page(self) {
             Some(addr) => Some(addr),
             None => {
-                if let Some(addr) = self.stack_2mb.allocate_page(self) {
+                if let Some(addr) = self.stack_2mb.lock().allocate_page(self) {
+                    let mut stack_4kb = self.stack_4kb.lock();
                     for i in 1..512 {
-                        self.stack_4kb.stacks.lock().available_pages.push(addr + (i*PAGE_SIZE_4KB) as Address);
+                        stack_4kb.available_pages.push(addr + (i*PAGE_SIZE_4KB) as Address);
                     }
                     Some(addr)
                 } else {
@@ -433,22 +437,22 @@ impl Pager {
     }
 
     pub fn free_page_1gb(&self, address: Address) {
-        self.stack_1gb.deallocate_page(address);
+        self.stack_1gb.lock().deallocate_page(address);
     }
 
     pub fn free_page_2mb(&self, address: Address) {
-        if let Some(agg_addr) = self.stack_2mb.deallocate_page(address) {
+        if let Some(agg_addr) = self.stack_2mb.lock().deallocate_page(address) {
             // we were able to aggregate this page back into a 1gb page, so return it to the 1gb stack
-            self.stack_1gb.deallocate_page(agg_addr);
+            self.stack_1gb.lock().deallocate_page(agg_addr);
         }
     }
 
     pub fn free_page_4kb(&self, address: Address) {
-        if let Some(agg_addr) = self.stack_4kb.deallocate_page(address) {
+        if let Some(agg_addr) = self.stack_4kb.lock().deallocate_page(address) {
             // we were able to aggregate this page back into a 2mb page, so return it to the 2mb stack
-            if let Some(agg_addr) = self.stack_2mb.deallocate_page(agg_addr) {
+            if let Some(agg_addr) = self.stack_2mb.lock().deallocate_page(agg_addr) {
                 // we were able to aggregate this page back into a 1gb page, so return it to the 1gb stack
-                self.stack_1gb.deallocate_page(agg_addr);
+                self.stack_1gb.lock().deallocate_page(agg_addr);
             }
         }
     }
@@ -517,7 +521,7 @@ impl Pager {
         
         Self::_map_physical_to_virtual( phys_addr, virtual_addr, page_type, flags, 
             &mut || { 
-                self.stack_4kb.allocate_page(self).map(
+                self.stack_4kb.lock().allocate_page(self).map(
                     |addr| {
                         unsafe {  
                             core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
