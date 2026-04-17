@@ -43,6 +43,7 @@ pub struct Stack<'a, T, const STACK_TYPE: bool> where T: Clone + Copy {
     pointer: usize,
 }
 
+#[allow(dead_code)]
 impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK_TYPE> {
     pub fn new(base: Address, size: usize) -> Stack<'static, T, STACK_TYPE> {
         Stack { 

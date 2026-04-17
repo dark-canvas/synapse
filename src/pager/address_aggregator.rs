@@ -6,7 +6,6 @@
 //! so the larger page can be returned to the larger stack.
 
 use crate::types::Address;
-use core::ptr;
 
 #[derive(Copy, Clone)]
 pub struct PageBucket {
@@ -14,6 +13,7 @@ pub struct PageBucket {
     pub available: u16,
 }
 
+#[allow(dead_code)]
 pub trait AddressAggregator {
     fn mark_available(&mut self, page_addr: Address);
     fn mark_allocated(&mut self, page_addr: Address);
@@ -54,13 +54,13 @@ impl <const PAGE_SIZE: usize> AddressAggregator for PageAggregator<PAGE_SIZE> {
     }
 
     fn allocate(&mut self, page_addr: Address) {
-        let agg_index = (page_addr as usize / PAGE_SIZE);
+        let agg_index = page_addr as usize / PAGE_SIZE;
         self.aggregate_map[agg_index].allocated += 1;
         self.aggregate_map[agg_index].available -= 1;
     }
 
     fn deallocate(&mut self, page_addr: Address) -> Option<Address> {
-        let agg_index = (page_addr as usize / PAGE_SIZE);
+        let agg_index = page_addr as usize / PAGE_SIZE;
         self.aggregate_map[agg_index].allocated -= 1;
         self.aggregate_map[agg_index].available += 1;
 
