@@ -156,10 +156,24 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
     }
 
     // TODO: assert validity of both indices?
+    // NOTE: these indices are specified as abosulute indices, which breaks the metaphor 
+    // of EXPAND_DOWN stacks where the 0th index is probably considered to be at the very 
+    // top, not the base of the stack... TODO: rename to "swap_absolute" and create a proper 
+    // swap method?
     pub fn swap(&mut self, index1: usize, index2: usize) {
         let temp = self.base[index1];
         self.base[index1] = self.base[index2];
         self.base[index2] = temp;
+    }
+
+    pub fn truncate(&mut self, new_length: usize) -> usize {
+        if self.len() >= new_length {
+            match STACK_TYPE {
+                EXPAND_UP => self.pointer = new_length,
+                EXPAND_DOWN => self.pointer = self.size - new_length,
+            }
+        }
+        self.len()
     }
 }
 
