@@ -84,6 +84,7 @@ use crate::pager::PageIterator;
 use super::address_aggregator::{AddressAggregator, PageAggregator};
 
 use super::PAGE_SIZE_1GB;
+use super::PAGE_SIZE_4KB;
 pub const ADDRESSES_PER_PAGE: usize = 512; // make this a const in pager?
 
 #[derive(PartialEq, PartialOrd)]
@@ -115,12 +116,12 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE]: {
 impl<const PAGE_SIZE: usize> PageStack<PAGE_SIZE> 
 where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
-    pub fn new(stack_base: Address, page_count: usize, aggregator_base: Address, pages: PageIterator) -> Self 
+    pub fn new<I: Iterator< Item = Address> > (stack_base: Address, page_count: usize, aggregator_base: Address, pages: I) -> Self 
     where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
         let mut available_pages = Stack::<Address, EXPAND_UP>::new(stack_base, page_count);
         let mut aggregate_map = PageAggregator::<{PAGE_SIZE * ADDRESSES_PER_PAGE}>::new(
                 aggregator_base,
-                page_count / ADDRESSES_PER_PAGE);
+                (page_count + (ADDRESSES_PER_PAGE-1)) / ADDRESSES_PER_PAGE);
 
         for page in pages {
             available_pages.push(page);
@@ -132,11 +133,11 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
         }
     }
 
-    // TODO: mapper isn't currently used... the intent was to allow for the memory backing the 
-    // page stack itself to be dynamically mapped into place
-    // Although; it would never be used in this method since we're just decreasing the available stack
-    // Arguably it could return unuesd pages.
-    pub fn allocate_page(&mut self, mapper: &dyn PageMapper) -> Option<Address> 
+    pub fn len(&self) -> usize {
+        self.available_pages.len()
+    }
+
+    pub fn allocate_page(&mut self) -> Option<Address> 
     where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
         if self.available_pages.is_empty() {
@@ -177,7 +178,6 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
                 let mut from_bottom_index = Search::Continue(0);
                 let mut from_top_index = Search::Continue(self.available_pages.len() - 1);
                 // TODO: get_unchecked() since we know it's within range?
-                // TODO: UT!
                 // Or create iterators for this purpose?
                 while from_bottom_index < from_top_index {
                     from_bottom_index = match from_bottom_index {
@@ -209,6 +209,7 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
                         from_top_index = Search::Continue(j-1);
                     }
                 }
+                self.available_pages.truncate(self.available_pages.len() - ADDRESSES_PER_PAGE);
             }
         }
         result
@@ -218,42 +219,169 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::vec;
+    use std::vec::Vec;
+    use std::collections::HashSet;
+    use crate::pager::PAGE_SIZE_2MB;
+    use crate::pager::address_aggregator::PageBucket;
 
     #[test]
     fn test_create_stack() {
-        //let borrower = MockPageBorrower::new();
-        //let mapper = MockPageMapper::new();
+        let address_stack = [0 as Address; 10];
+        let address_aggregator = [PageBucket{allocated: 0, available: 0}; 4096];
 
-        let ps = PageStack::<4096>::new(0x1000, 0, 0x2000);
-        // TODO: what can we assert here?
+        let addresses = vec![ 0x3000 as Address, 0x4000, 0x5000 ];
+
+        let ps = PageStack::<4096>::new(
+            address_stack.as_ptr() as Address, 
+            10 * ADDRESSES_PER_PAGE, 
+            address_aggregator.as_ptr() as Address,
+            addresses.iter().copied());
+
+        assert_eq!(address_stack[0], 0x3000);
+        assert_eq!(address_stack[1], 0x4000);
+        assert_eq!(address_stack[2], 0x5000);
+        assert_eq!(address_aggregator[0].available, 3);
     }
 
     #[test]
-    fn test_aggregator() {
-        let agg_data = [PageBucket{ allocated:0, available:0 }; 10];
-        let mut aggregator = PageAggregator::<1000>::new(agg_data.as_ptr() as Address, agg_data.len());
+    fn test_allocate_page() {
+        let address_stack = [0 as Address; 10];
+        let mut address_aggregator = [PageBucket{allocated: 0, available: 0}; 4096];
 
-        // Creating the aggregator will clear the memory... fill up buckets
-        for i in 0..agg_data.len() {
-            aggregator.aggregate_map[i].allocated = 0;
-            aggregator.aggregate_map[i].available = 512;
+        let address1 = 0x1234000 as Address;
+        let address2 = 0x5678000 as Address;
+
+        let addresses = vec![ address1, address2 ];
+
+        let max_pages = address2 as usize / 4096;
+
+        let mut ps = PageStack::<4096>::new(
+            address_stack.as_ptr() as Address, 
+            max_pages, 
+            address_aggregator.as_ptr() as Address,
+            addresses.iter().copied());
+
+        assert_eq!(ps.allocate_page(), Some(address2));
+        assert_eq!(ps.allocate_page(), Some(address1));
+        assert_eq!(ps.allocate_page(), None);
+    }
+
+    #[test]
+    fn test_deallocate_page() {
+        let address_stack = [0 as Address; 10];
+        let mut address_aggregator = [PageBucket{allocated: 0, available: 0}; 4096];
+
+        let addresses = vec![ ];
+
+        let address1 = 0x1234000 as Address;
+        let address2 = 0x5678000 as Address;
+
+        let max_pages = address2 as usize / 4096;
+
+        let mut ps = PageStack::<4096>::new(
+            address_stack.as_ptr() as Address, 
+            max_pages, 
+            address_aggregator.as_ptr() as Address,
+            addresses.iter().copied());
+
+        address_aggregator[address1 as usize / PAGE_SIZE_2MB].allocated = 5;
+        address_aggregator[address2 as usize / PAGE_SIZE_2MB].allocated = 10;
+
+        assert_eq!(ps.deallocate_page(address1), None);
+        assert_eq!(ps.deallocate_page(address2), None);
+
+        assert_eq!(address_stack[0], 0x1234000);
+        assert_eq!(address_stack[1], 0x5678000);
+        assert_eq!(address_aggregator[address1 as usize / PAGE_SIZE_2MB].allocated, 4);
+        assert_eq!(address_aggregator[address1 as usize / PAGE_SIZE_2MB].available, 1);
+        assert_eq!(address_aggregator[address2 as usize / PAGE_SIZE_2MB].allocated, 9);
+        assert_eq!(address_aggregator[address2 as usize / PAGE_SIZE_2MB].available, 1);
+    }
+    
+    // test that returning/deallocating all pages back to the stack results in them being 
+    // aggregated back to a larger page
+    #[test]
+    fn test_deallocation_aggregation() {
+        let address_stack = [0 as Address; 512]; // just enough space to hold them all
+        let mut address_aggregator = [PageBucket{allocated: 0, available: 0}; 4096];
+
+        // Start off with all 4kb addresses which comprise the 2mb page from 10MB to 2MB
+        // i.e., the 5th 2mb page (first being the 0th)
+        let mut addresses = Vec::<Address>::new();
+        let base_address = (PAGE_SIZE_2MB*5) as Address;
+        let top_of_stack = base_address + (PAGE_SIZE_2MB - PAGE_SIZE_4KB) as Address;
+        for i in (0..PAGE_SIZE_2MB).step_by(PAGE_SIZE_4KB) {
+            addresses.push(base_address + i as Address)
         }
+        // no sense continuing if this isn't true...
+        assert_eq!(addresses.len(), ADDRESSES_PER_PAGE);
 
-        aggregator.allocate(0);
-        assert_eq!(aggregator.aggregate_map[0].allocated, 1);
-        assert_eq!(aggregator.aggregate_map[0].available, 511);
+        let max_pages = (PAGE_SIZE_2MB * 6) / 4096;
 
-        aggregator.allocate(100);
-        assert_eq!(aggregator.aggregate_map[0].allocated, 2);
-        assert_eq!(aggregator.aggregate_map[0].available, 510);
+        let mut ps = PageStack::<4096>::new(
+            address_stack.as_ptr() as Address, 
+            max_pages, 
+            address_aggregator.as_ptr() as Address,
+            addresses.iter().copied());
 
-        aggregator.allocate(5123);
-        assert_eq!(aggregator.aggregate_map[5].allocated, 1);
-        assert_eq!(aggregator.aggregate_map[5].available, 511);
+        // we expect the stack to be constructed with all the addresses...
+        assert_eq!(address_stack[0], base_address);
+        assert_eq!(address_stack[511], top_of_stack);
+        assert_eq!(ps.len(), ADDRESSES_PER_PAGE);
 
-        let result = aggregator.deallocate(5999);
-        assert_eq!(aggregator.aggregate_map[5].allocated, 0);
-        assert_eq!(aggregator.aggregate_map[5].available, 0);
-        assert_eq!(result, Some(5000));
+        // now if we allocate a page, and return it back (deallocate it) the stack should realize it has 
+        // enough pages to aggregate into a single 2mb page, and should tell us that...
+        assert_eq!(ps.allocate_page(), Some(top_of_stack));
+        assert_eq!(ps.deallocate_page(top_of_stack), Some(base_address));
+        assert_eq!(ps.len(), 0);
+    }
+
+    // test that the stack has all pages removed that belong to the aggregated page
+    #[test]
+    fn test_deallocation_aggregation_stack_cleanup() {
+        let address_stack = [0 as Address; 1024]; // just enough space to hold them all
+        let mut address_aggregator = [PageBucket{allocated: 0, available: 0}; 4096];
+
+        // intersperse 4kb pages belonging to two different 2mb pages
+        let mut addresses = Vec::<Address>::new();
+        let base_address_aggregate_page = (PAGE_SIZE_2MB*5) as Address;
+        let base_address_other_page = (PAGE_SIZE_2MB*2) as Address;
+        let top_of_stack = base_address_aggregate_page + (PAGE_SIZE_2MB - PAGE_SIZE_4KB) as Address;
+
+        for i in 0..512 {
+            addresses.push(base_address_other_page + (i* PAGE_SIZE_4KB) as Address);
+            addresses.push(base_address_aggregate_page + (i * PAGE_SIZE_4KB) as Address);
+        }
+        // no sense continuing if this isn't true...
+        assert_eq!(addresses.len(), ADDRESSES_PER_PAGE*2);
+
+        let max_pages = (PAGE_SIZE_2MB * 6) / 4096;
+        let mut ps = PageStack::<4096>::new(
+            address_stack.as_ptr() as Address, 
+            max_pages, 
+            address_aggregator.as_ptr() as Address,
+            addresses.iter().copied());
+
+        // we expect the stack to be constructed with all the addresses...
+        assert_eq!(ps.len(), addresses.len());
+
+        // now if we allocate a page, and return it back (deallocate it) the stack should realize it has 
+        // enough pages to aggregate into a single 2mb page, and should tell us that...
+        assert_eq!(ps.allocate_page(), Some(top_of_stack));
+        assert_eq!(ps.deallocate_page(top_of_stack), Some(base_address_aggregate_page));
+        assert_eq!(ps.len(), 512);
+
+        // Now allocate pages and ensure they're all within range of the un-aggregated 
+        // page and that they're all unique
+        let mut address_set = HashSet::new();
+        while ps.len() > 0 {
+            if let Some(page) = ps.allocate_page() {
+                address_set.insert(page);
+            } else {
+                assert!(false);
+            }
+        }
+        assert_eq!(address_set.len(), 512);
     }
 }

@@ -71,7 +71,7 @@ pub extern "C" fn _start() -> ! {
         }
     }
 
-    pager.allocate_page(pager::PageType::Page4K);
+    pager::run_time_tests(&pager);
 
     let framebuffer = config.get_framebuffer_address() as *mut u8;
     for i in 0..(config.get_framebuffer_size() as usize) {
