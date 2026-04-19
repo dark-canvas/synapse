@@ -24,9 +24,13 @@
 //!
 //! Note that the stack type is declared as a const generic parameter, which means that 
 //! many of the brances and conditional can be optimized or compiled out entirely.
+//!
+//! While the underlying memory layout of the expand up and expand down stacks differs, the 
+//! functions which accept and provide indices are meant to behave in the same way.  The 0th 
+//! index will refer to the first item pushed onto the stack, with increasing indices getting 
+//! closer to the most recently pushed element (len()-1 being the last pushed element)
 
 use crate::types::Address;
-//use core::cmp::PartialEq
 use core::ops::Index; 
 
 pub const EXPAND_UP: bool = true;
@@ -37,11 +41,47 @@ pub trait SimpleStack<T> {
     fn pop(&mut self) -> Option<T>;
 }
 
-pub struct Stack<'a, T, const STACK_TYPE: bool> where T: Clone + Copy {
+pub struct Stack<'a, T, const STACK_TYPE: bool> where T: Clone + Copy + PartialEq {
     size: usize,
     base: &'a mut[T],
     pointer: usize,
 }
+
+pub struct StackIterator<'a, T, const STACK_TYPE: bool> where T: Clone + Copy + PartialEq {
+    stack: &'a Stack<'a, T, STACK_TYPE>,
+    num: usize,
+}
+
+pub struct ReverseStackIterator<'a, T, const STACK_TYPE: bool> where T: Clone + Copy + PartialEq {
+    stack: &'a Stack<'a, T, STACK_TYPE>,
+    num: usize,
+}
+
+impl<'a, T, const STACK_TYPE: bool> Iterator for StackIterator<'a, T, STACK_TYPE> 
+where T: Clone + Copy + PartialEq {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = self.stack.get(self.num);
+        self.num += 1;
+        result
+    }
+}
+
+impl<'a, T, const STACK_TYPE: bool> Iterator for ReverseStackIterator<'a, T, STACK_TYPE> 
+where T: Clone + Copy + PartialEq {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.num > 0 {
+            let result = self.stack.get(self.num-1);
+            self.num -= 1;
+            return result
+        }
+        None
+    }
+}
+
 
 #[allow(dead_code)]
 impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK_TYPE> {
@@ -60,6 +100,14 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
         match STACK_TYPE {
             EXPAND_UP => 1,
             EXPAND_DOWN => -1,
+        }
+    }
+
+    // It's assume that the index has already been validated
+    fn logical_to_array_index(&self, index: usize) -> usize {
+        match STACK_TYPE {
+            EXPAND_UP => index,
+            EXPAND_DOWN => self.size - 1 - index,
         }
     }
 
@@ -125,47 +173,74 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
 
         for i in start..end {
             if self.base[i] == value {
-                return Some(i);
+                return match STACK_TYPE {
+                    EXPAND_UP => Some(i),
+                    EXPAND_DOWN => Some(self.size-1 - i),
+                }
             }
         }
         None
     }
 
-    pub fn remove_index(&mut self, index: usize) {
-        // TODO: assert index validity?
-        // TODO: return the item removed?
-        // swap the last item with this one
-        if let Some(last) = self.pop() {
-            self.base[index] = last;
+    pub fn remove_index(&mut self, index: usize) -> Option<T> {
+        if index < self.len() {
+            let index = self.logical_to_array_index(index);
+            // swap the last item with this one
+            let result = self.base[index];
+            if let Some(last) = self.pop() {
+                self.base[index] = last;
+                return Some(result);
+            }
         }
+        None
     }
 
-    // TODO: determine what this index should mean based on expand up/down direction
-    // And write UTs which enforce it
+    /// Get an element from the stack, whereby the 0th element would be the first 
+    /// element pushed on the stack, and the indicies increment towards the top 
+    /// of the stack (i.e., returning the most recently pushed item onto the stack via the 
+    /// len()-1 index).
     pub fn get(&self, index: usize) -> Option<T> {
-        let (start, end) = match STACK_TYPE {
-            EXPAND_UP => (0, self.pointer),
-            EXPAND_DOWN => (self.pointer, self.size)
-        };
+        if index >= self.len() {
+            return None
+        }
 
-        if index >= start && index < end {
-            Some(self.base[index])
-        } else {
-            None
+        return Some(self.get_unchecked(index));
+    }
+
+    /// Same as get() but without any assertions on whether the index is valid
+    pub fn get_unchecked(&self, index: usize) -> T {
+        match STACK_TYPE {
+            EXPAND_UP => self.base[index],
+            EXPAND_DOWN => self.base[self.size-1-index]
         }
     }
 
-    // TODO: assert validity of both indices?
-    // NOTE: these indices are specified as abosulute indices, which breaks the metaphor 
-    // of EXPAND_DOWN stacks where the 0th index is probably considered to be at the very 
-    // top, not the base of the stack... TODO: rename to "swap_absolute" and create a proper 
-    // swap method?
-    pub fn swap(&mut self, index1: usize, index2: usize) {
-        let temp = self.base[index1];
-        self.base[index1] = self.base[index2];
-        self.base[index2] = temp;
+    // Swap the elements at the logical indices provided
+    pub fn swap(&mut self, index1: usize, index2: usize) -> bool {
+        if index1 < self.len() && index2 < self.len() {
+            let index1 = self.logical_to_array_index(index1);
+            let index2 = self.logical_to_array_index(index2);
+
+            let temp = self.base[index1];
+            self.base[index1] = self.base[index2];
+            self.base[index2] = temp;
+            return true;
+        }
+        false
     }
 
+    // Same as swap() but accepts absolute/array indices instead
+    pub fn swap_absolute(&mut self, index1: usize, index2: usize) -> bool {
+        if index1 < self.len() && index2 < self.len() {
+            let temp = self.base[index1];
+            self.base[index1] = self.base[index2];
+            self.base[index2] = temp;
+            return true;
+        }
+        false
+    }
+
+    /// Truncate the list at `new_length` elements
     pub fn truncate(&mut self, new_length: usize) -> usize {
         if self.len() >= new_length {
             match STACK_TYPE {
@@ -174,6 +249,24 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
             }
         }
         self.len()
+    }
+
+    /// Returns an iterator that iterates the items on the stack in the order 
+    /// which they were pushed onto the stack
+    pub fn iter(&self) -> StackIterator<T, STACK_TYPE> {
+        StackIterator { 
+            stack: self,
+            num: 0,
+        }
+    }
+
+    /// Returns an iterator that iterates the items on the stack in the reverse 
+    /// order that they were added (i.e., as if the stack were continually popped)
+    pub fn reverse_iter(&self) -> ReverseStackIterator<T, STACK_TYPE> {
+        ReverseStackIterator {
+            stack: self,
+            num: self.len(),
+        }
     }
 }
 
@@ -234,14 +327,23 @@ mod tests {
         let mut stack = Stack::<usize, EXPAND_UP>::new(stack_data.as_ptr() as Address, 10);
         stack.push(0x12345678);
         stack.push(0x9abcdef0);
+        stack.push(0xffffffff);
         assert_eq!(stack.base[0], 0x12345678);
         assert_eq!(stack.base[1], 0x9abcdef0);
+        assert_eq!(stack.base[2], 0xffffffff);
+        assert_eq!(stack.get(0), Some(0x12345678));
+        assert_eq!(stack.get(1), Some(0x9abcdef0));
+        assert_eq!(stack.get(2), Some(0xffffffff));
+        assert_eq!(stack.get(3), None);
+        assert_eq!(stack.find(0x9abcdef0), Some(1));
+        assert_eq!(stack.find(0xffffffff), Some(2));
+        assert_eq!(stack.find(5150), None);
         assert_eq!(stack.size, 10);
-        assert_eq!(stack.len(), 2);
+        assert_eq!(stack.len(), 3);
         assert_eq!(stack.capacity(), 10);
-        assert_eq!(stack.available(), 8);
+        assert_eq!(stack.available(), 7);
         assert_eq!(stack.base(), stack_data.as_ptr() as Address);
-        assert_eq!(stack.top(), (stack_data.as_ptr() as usize + 2 * core::mem::size_of::<usize>()) as Address);
+        assert_eq!(stack.top(), (stack_data.as_ptr() as usize + 3 * core::mem::size_of::<usize>()) as Address);
     }
 
     #[test]
@@ -250,12 +352,80 @@ mod tests {
         let mut stack = Stack::<usize, EXPAND_DOWN>::new(stack_data.as_ptr() as Address, 10);
         stack.push(0x12345678);
         stack.push(0x9abcdef0);
+        stack.push(0xffffffff);
         assert_eq!(stack.base[9], 0x12345678);
+        assert_eq!(stack.base[8], 0x9abcdef0);
+        assert_eq!(stack.base[7], 0xffffffff);
+        assert_eq!(stack.get(0), Some(0x12345678));
+        assert_eq!(stack.get(1), Some(0x9abcdef0));
+        assert_eq!(stack.get(2), Some(0xffffffff));
+        assert_eq!(stack.get(3), None);
+        assert_eq!(stack.find(0x9abcdef0), Some(1));
+        assert_eq!(stack.find(0xffffffff), Some(2));
+        assert_eq!(stack.find(5150), None);
         assert_eq!(stack.size, 10);
-        assert_eq!(stack.len(), 2);
+        assert_eq!(stack.len(), 3);
         assert_eq!(stack.capacity(), 10);
-        assert_eq!(stack.available(), 8);
+        assert_eq!(stack.available(), 7);
         assert_eq!(stack.base(), (stack_data.as_ptr() as usize + 10 * core::mem::size_of::<usize>()) as Address);
-        assert_eq!(stack.top(), (stack_data.as_ptr() as usize + 8 * core::mem::size_of::<usize>()) as Address);
+        assert_eq!(stack.top(), (stack_data.as_ptr() as usize + 7 * core::mem::size_of::<usize>()) as Address);
+    }
+
+    #[test]
+    fn test_iterate() {
+        let expand_up_stack_data = [0usize; 10];
+        let expand_dn_stack_data = [0usize; 10];
+
+        let mut expand_up_stack = Stack::<usize, EXPAND_UP>::new(expand_up_stack_data.as_ptr() as Address, 10);
+        let mut expand_dn_stack = Stack::<usize, EXPAND_DOWN>::new(expand_dn_stack_data.as_ptr() as Address, 10);
+
+        expand_up_stack.push(0x12345678);
+        expand_up_stack.push(0x9abcdef0);
+        expand_up_stack.push(0xffffffff);
+
+        expand_dn_stack.push(0x12345678);
+        expand_dn_stack.push(0x9abcdef0);
+        expand_dn_stack.push(0xffffffff);
+
+        let mut iter_up = expand_up_stack.iter();
+        let mut iter_dn = expand_dn_stack.iter();
+
+        assert_eq!(iter_up.next(), Some(0x12345678));
+        assert_eq!(iter_dn.next(), Some(0x12345678));
+        assert_eq!(iter_up.next(), Some(0x9abcdef0));
+        assert_eq!(iter_dn.next(), Some(0x9abcdef0));
+        assert_eq!(iter_up.next(), Some(0xffffffff));
+        assert_eq!(iter_dn.next(), Some(0xffffffff));
+        assert_eq!(iter_up.next(), None);
+        assert_eq!(iter_dn.next(), None);
+    }
+
+    #[test]
+    fn test_reverse_iterate() {
+        let expand_up_stack_data = [0usize; 10];
+        let expand_dn_stack_data = [0usize; 10];
+
+        let mut expand_up_stack = Stack::<usize, EXPAND_UP>::new(expand_up_stack_data.as_ptr() as Address, 10);
+        let mut expand_dn_stack = Stack::<usize, EXPAND_DOWN>::new(expand_dn_stack_data.as_ptr() as Address, 10);
+
+        expand_up_stack.push(0x12345678);
+        expand_up_stack.push(0x9abcdef0);
+        expand_up_stack.push(0xffffffff);
+
+        expand_dn_stack.push(0x12345678);
+        expand_dn_stack.push(0x9abcdef0);
+        expand_dn_stack.push(0xffffffff);
+
+        let mut iter_up = expand_up_stack.reverse_iter();
+        let mut iter_dn = expand_dn_stack.reverse_iter();
+
+        assert_eq!(iter_up.next(), Some(0xffffffff));
+        assert_eq!(iter_dn.next(), Some(0xffffffff));
+        assert_eq!(iter_up.next(), Some(0x9abcdef0));
+        assert_eq!(iter_dn.next(), Some(0x9abcdef0));
+        assert_eq!(iter_up.next(), Some(0x12345678));
+        assert_eq!(iter_dn.next(), Some(0x12345678));
+        assert_eq!(iter_up.next(), None);
+        assert_eq!(iter_dn.next(), None);
     }
 }
