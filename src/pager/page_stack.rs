@@ -82,7 +82,7 @@ use crate::types::Address;
 use crate::pager::PageIterator;
 
 use super::address_aggregator::{AddressAggregator, PageAggregator};
-
+use super::VirtualAddress;
 use super::PAGE_SIZE_1GB;
 use super::PAGE_SIZE_4KB;
 pub const ADDRESSES_PER_PAGE: usize = 512; // make this a const in pager?
@@ -96,9 +96,13 @@ enum Search {
 #[allow(dead_code)]
 #[cfg_attr(test, automock)]
 pub trait PageMapper {
+    /// Ensure that all virtual memory between base and end has physical pages mapped to them.
+    /// The function has freedom over which pages are used for this purpose.  It will prefer 
+    /// to use larger pages if they will fit.
+    ///
     /// Ok(b) -> address is mapped, b == true means the page was mapped, otherwise it was already mapped
     /// Err -> couldn't map the page..
-    fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool, &'static str>;
+    fn ensure_mapped(&self, base: VirtualAddress, end: VirtualAddress) -> Result<bool, &'static str>;
 }
 
 // How to prevent double frees?
@@ -177,12 +181,11 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
                 // from top searches for pages that belong (to swap with the ones from the bottom)
                 let mut from_bottom_index = Search::Continue(0);
                 let mut from_top_index = Search::Continue(self.available_pages.len() - 1);
-                // TODO: get_unchecked() since we know it's within range?
-                // Or create iterators for this purpose?
+                // We use get_unchecked() since we know the index is within range
                 while from_bottom_index < from_top_index {
                     from_bottom_index = match from_bottom_index {
                         Search::Continue(i) => {
-                            if is_within(self.available_pages.get(i).unwrap()) {
+                            if is_within(self.available_pages.get_unchecked(i)) {
                                 Search::Match(i)
                             } else {
                                 Search::Continue(i+1)
@@ -193,7 +196,7 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
                     from_top_index = match from_top_index {
                         Search::Continue(i) => {
-                            if !is_within(self.available_pages.get(i).unwrap()) {
+                            if !is_within(self.available_pages.get_unchecked(i)) {
                                 Search::Match(i)
                             } else {
                                 Search::Continue(i-1)
@@ -204,7 +207,7 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
                     if let Search::Match(i) = from_bottom_index &&
                        let Search::Match(j) = from_top_index {
-                        self.available_pages.swap(i, j);
+                        self.available_pages.swap_absolute(i, j);
                         from_bottom_index = Search::Continue(i+1);
                         from_top_index = Search::Continue(j-1);
                     }

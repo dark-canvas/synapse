@@ -148,9 +148,9 @@ pub fn next_4kb_page(addr: Address) -> Address {
 }
 
 impl PageMapper for Pager {
-    // TODO: specify the page size?
-    // TODO: address -> VirtualAddress
-    fn ensure_mapped(&self, base: Address, end: Address) -> Result<bool, &'static str> {
+    fn ensure_mapped(&self, base: VirtualAddress, end: VirtualAddress) -> Result<bool, &'static str> {
+        let base = base.0;
+        let end = end.0;
         let mut pages_mapped = false;
         let mut current_addr = base;
         while current_addr < end {
