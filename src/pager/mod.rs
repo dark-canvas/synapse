@@ -354,10 +354,21 @@ impl Pager {
         unsafe {
             let pl4_table = &mut *(pl4_frame.start_address().as_u64() as *mut PageTable);
 
-            // map into itself for easier virtual to physical mappings
-            let pl4_entry = &mut pl4_table[510];
-            pl4_entry.set_addr(pl4_addr, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE );
-            // Or... map all of physical memory, identity mapped into the second last pl4 entry
+            // map pl4 table into itself for easier virtual to physical mappings
+            // let pl4_entry = &mut pl4_table[510];
+            // pl4_entry.set_addr(pl4_addr, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE );
+            
+            // Physical memory (due to the UEFI firmware and bootloader) is currently identity mapped.
+            // We've artificially limited the kernel's support for 512MB of memory, which means the entire contents of physical, 
+            // identity mapped, memory is at pl4_table[0].
+            // We want to keep this (we want the ability to read/write directly to physical memory in order to create new, or edit 
+            // existing, page tables), but we'll want to remap that region of memory with every new proceess so we'll copy 
+            // it up higher in the table (at index ...) which means we can then access physical memory by reading/writing to 
+            // the physical address + PHYSICAL_OFFSET (0xFFFFFF0000000000)
+            let pl4_first_entry = pl4_table[0].addr();
+            pl4_table[510].set_addr(
+                pl4_first_entry, 
+                PageTableFlags::GLOBAL | PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE );
 
             Pager { 
                 stack_1gb: Mutex::new( 
@@ -374,14 +385,14 @@ impl Pager {
     }
 
     pub fn allocate_1gb_page(&self) -> Option<Address> {
-        self.stack_1gb.lock().allocate_page(self)
+        self.stack_1gb.lock().allocate_page()
     }
 
     pub fn allocate_2mb_page(&self) -> Option<Address> {
-        match self.stack_2mb.lock().allocate_page(self) {
+        match self.stack_2mb.lock().allocate_page() {
             Some(addr) => Some(addr),
             None => {
-                if let Some(addr) = self.stack_1gb.lock().allocate_page(self) {
+                if let Some(addr) = self.stack_1gb.lock().allocate_page() {
                     let mut stack_2mb = self.stack_2mb.lock();
                     for i in 1..512 {
                         stack_2mb.available_pages.push(addr + (i*PAGE_SIZE_2MB) as Address);
@@ -395,10 +406,10 @@ impl Pager {
     }
 
     pub fn allocate_4kb_page(&self) -> Option<Address> {
-        match self.stack_4kb.lock().allocate_page(self) {
+        match self.stack_4kb.lock().allocate_page() {
             Some(addr) => Some(addr),
             None => {
-                if let Some(addr) = self.stack_2mb.lock().allocate_page(self) {
+                if let Some(addr) = self.stack_2mb.lock().allocate_page() {
                     let mut stack_4kb = self.stack_4kb.lock();
                     for i in 1..512 {
                         stack_4kb.available_pages.push(addr + (i*PAGE_SIZE_4KB) as Address);
@@ -512,7 +523,7 @@ impl Pager {
         
         Self::_map_physical_to_virtual( phys_addr, virtual_addr, page_type, flags, 
             &mut || { 
-                self.stack_4kb.lock().allocate_page(self).map(
+                self.stack_4kb.lock().allocate_page().map(
                     |addr| {
                         unsafe {  
                             core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
@@ -683,6 +694,20 @@ impl Pager {
     }
 }
 
+pub fn run_time_tests(pager: &Pager) {
+    let page = pager.allocate_page(PageType::Page4K).expect("Must be able to acquire 4kb page");
+    unsafe { core::ptr::write_bytes(page as *mut u8, 0xff, 4096); }
+
+    let phys_test_addr = (page + PHYSICAL_OFFSET) as *const u8;
+    let phys_test_array: &[u8; 4096] = unsafe {
+        &*(phys_test_addr as *const [u8; 4096])
+    };
+    assert_eq!(phys_test_array[0], 0xff);
+
+    unsafe { core::ptr::write_bytes(page as *mut u8, 0x80, 4096); }
+    assert_eq!(phys_test_array[0], 0x80);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -695,9 +720,9 @@ mod tests {
     #[test]
     fn test_page_iterator() {
         // create a mmap with various edge cases
-        let mmapPage = [0u8; 4096];
-        let mmapPageAddr = mmapPage.as_ptr() as Address;
-        let mut mmap = MemoryMap::new_from_page(mmapPageAddr).unwrap();
+        let mmap_page = [0u8; 4096];
+        let mmap_page_addr = mmap_page.as_ptr() as Address;
+        let mut mmap = MemoryMap::new_from_page(mmap_page_addr).unwrap();
 
         let mut base: Address = 0;
 
