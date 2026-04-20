@@ -49,12 +49,8 @@ pub struct Stack<'a, T, const STACK_TYPE: bool> where T: Clone + Copy + PartialE
 
 pub struct StackIterator<'a, T, const STACK_TYPE: bool> where T: Clone + Copy + PartialEq {
     stack: &'a Stack<'a, T, STACK_TYPE>,
-    num: usize,
-}
-
-pub struct ReverseStackIterator<'a, T, const STACK_TYPE: bool> where T: Clone + Copy + PartialEq {
-    stack: &'a Stack<'a, T, STACK_TYPE>,
-    num: usize,
+    num: isize,
+    direction: isize,
 }
 
 impl<'a, T, const STACK_TYPE: bool> Iterator for StackIterator<'a, T, STACK_TYPE> 
@@ -62,26 +58,24 @@ where T: Clone + Copy + PartialEq {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = self.stack.get(self.num);
-        self.num += 1;
+        let result = self.stack.get(self.num as usize);
+        self.num += self.direction;
         result
     }
 }
 
-impl<'a, T, const STACK_TYPE: bool> Iterator for ReverseStackIterator<'a, T, STACK_TYPE> 
+impl<'a, T, const STACK_TYPE: bool> StackIterator<'a, T, STACK_TYPE> 
 where T: Clone + Copy + PartialEq {
-    type Item = T;
+    pub fn rev(mut self) -> Self {
+        self.direction = -1;
+        self.num = self.stack.len() as isize - 1;
+        self
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.num > 0 {
-            let result = self.stack.get(self.num-1);
-            self.num -= 1;
-            return result
-        }
-        None
+    pub fn get_index(&self) -> usize {
+        self.num as usize
     }
 }
-
 
 #[allow(dead_code)]
 impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK_TYPE> {
@@ -215,6 +209,8 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
         }
     }
 
+    // swap which accepts iterators?
+
     // Swap the elements at the logical indices provided
     pub fn swap(&mut self, index1: usize, index2: usize) -> bool {
         if index1 < self.len() && index2 < self.len() {
@@ -257,16 +253,14 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
         StackIterator { 
             stack: self,
             num: 0,
+            direction: 1,
         }
     }
 
     /// Returns an iterator that iterates the items on the stack in the reverse 
     /// order that they were added (i.e., as if the stack were continually popped)
-    pub fn reverse_iter(&self) -> ReverseStackIterator<T, STACK_TYPE> {
-        ReverseStackIterator {
-            stack: self,
-            num: self.len(),
-        }
+    pub fn reverse_iter(&self) -> StackIterator<T, STACK_TYPE> {
+        self.iter().rev()
     }
 }
 
