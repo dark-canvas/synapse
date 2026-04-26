@@ -141,6 +141,15 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
         self.available_pages.len()
     }
 
+    pub fn top(&self) -> Address {
+        self.available_pages.top()
+    }
+
+    pub fn give(&mut self, page: Address) {
+        self.available_pages.push(page);
+        self.aggregate_map.mark_available(page);
+    }
+
     pub fn allocate_page(&mut self) -> Option<Address> 
     where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 

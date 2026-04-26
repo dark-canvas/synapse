@@ -162,3 +162,142 @@ impl<'a> Iterator for PageIterator<'a> {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use satus_struct::memory_map::MemoryRegionType;
+
+    fn pages_4kb(n: usize) -> Address { (PAGE_SIZE_4KB * n) as Address }
+    fn pages_2mb(n: usize) -> Address { (PAGE_SIZE_2MB * n) as Address }
+    fn pages_1gb(n: usize) -> Address { (PAGE_SIZE_1GB * n) as Address }
+
+    #[test]
+    fn test_page_iterator() {
+        // create a mmap with various edge cases
+        let mmap_page = [0u8; 4096];
+        let mmap_page_addr = mmap_page.as_ptr() as Address;
+        let mut mmap = MemoryMap::new_from_page(mmap_page_addr).unwrap();
+
+        let mut base: Address = 0;
+
+        // 1. multiple 4kb pages in a region
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_4kb(2));
+
+        // 2. a single 4kb page in a region
+        base = pages_4kb(4);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_4kb(1));
+
+        // 3. multiple 2mb pages in a region
+        base = PAGE_SIZE_2MB as Address;
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_2mb(2));
+
+        // 4. a single 2mb page in a region
+        base = pages_2mb(4);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_2mb(1));
+
+        // 5. multiple 1gb pages in a region
+        base = PAGE_SIZE_1GB as Address;
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_1gb(3));
+
+        // 6. a single 1gb page in a region
+        base = pages_1gb(4);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_1gb(1));
+
+        // 7. some 4kb pages followed by a 2mb page
+        base = pages_1gb(6) - pages_4kb(2);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_4kb(2) + pages_2mb(1));
+
+        // 8. some 4kb pages followed by a 1gb page
+        base = pages_1gb(7) - pages_4kb(2);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_4kb(2) + pages_1gb(1));
+
+        // 9. some 2mb pages followed by a 1gb page
+        base = pages_1gb(8) - pages_2mb(2);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_2mb(2) + pages_1gb(1));
+
+        // 10. a 2mb page followed by some 4kb pages
+        base = pages_1gb(9) - pages_2mb(1);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_2mb(1) + pages_4kb(2));
+
+        // 11. a 1gb page followed by some 4kb pages
+        base = pages_1gb(10);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_1gb(1) + pages_4kb(2));
+
+        // 12. a 1gb page followed by some 2mb pages
+        base = pages_1gb(11);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_1gb(1) + pages_2mb(2));
+
+        // 13. some 4kb pages followed by a 2mb page, a 1gb page, then a 2mb page and a 4kb page
+        base = pages_1gb(13) - pages_2mb(1) - pages_4kb(2);
+        mmap.add_region(MemoryRegionType::Available, base, base + pages_4kb(2) + pages_2mb(1) + pages_1gb(1) + pages_2mb(1) + pages_4kb(1));
+
+        let mut page_iter_4kb = PageIterator::new(&mmap, PAGE_SIZE_4KB);
+        let mut page_iter_2mb = PageIterator::new(&mmap, PAGE_SIZE_2MB);
+        let mut page_iter_1gb = PageIterator::new(&mmap, PAGE_SIZE_1GB);
+
+        // 1. multiple 4kb pages in a region
+        assert_eq!(page_iter_4kb.next(), Some(0));
+        assert_eq!(page_iter_4kb.next(), Some(0x1000));
+        
+        // 2. a single 4kb page in a region
+        assert_eq!(page_iter_4kb.next(), Some(0x4000));
+
+        // 3. multiple 2mb pages in a region
+        assert_eq!(page_iter_2mb.next(), Some(0x200000));
+        assert_eq!(page_iter_2mb.next(), Some(0x400000));
+
+        // 4. a single 2mb page in a region
+        assert_eq!(page_iter_2mb.next(), Some(0x800000));
+
+        // 5. multiple 1gb pages in a region
+        assert_eq!(page_iter_1gb.next(), Some(0x40000000));
+        assert_eq!(page_iter_1gb.next(), Some(0x80000000));
+        assert_eq!(page_iter_1gb.next(), Some(0xC0000000));
+
+        // 6. a single 1gb page in a region
+        assert_eq!(page_iter_1gb.next(), Some(0x100000000));
+
+        // 7. some 4kb pages followed by a 2mb page
+        assert_eq!(page_iter_4kb.next(), Some(0x180000000 - pages_4kb(2)));
+        assert_eq!(page_iter_4kb.next(), Some(0x180000000 - pages_4kb(1)));
+        assert_eq!(page_iter_2mb.next(), Some(0x180000000));
+
+        // 8. some 4kb pages followed by a 1gb page
+        assert_eq!(page_iter_4kb.next(), Some(0x1C0000000 - pages_4kb(2)));
+        assert_eq!(page_iter_4kb.next(), Some(0x1C0000000 - pages_4kb(1)));
+        assert_eq!(page_iter_1gb.next(), Some(0x1C0000000));
+
+        // 9. some 2mb pages followed by a 1gb page
+        assert_eq!(page_iter_2mb.next(), Some(0x200000000 - pages_2mb(2)));
+        assert_eq!(page_iter_2mb.next(), Some(0x200000000 - pages_2mb(1)));
+        assert_eq!(page_iter_1gb.next(), Some(0x200000000));
+                                            
+        // 10. a 2mb page followed by some 4kb pages
+        assert_eq!(page_iter_2mb.next(), Some(0x240000000 - pages_2mb(1)));
+        assert_eq!(page_iter_4kb.next(), Some(0x240000000));
+        assert_eq!(page_iter_4kb.next(), Some(0x240000000 + pages_4kb(1)));
+
+        // 11. a 1gb page followed by some 4kb pages
+        assert_eq!(page_iter_1gb.next(), Some(0x280000000));
+        assert_eq!(page_iter_4kb.next(), Some(0x2C0000000));
+        assert_eq!(page_iter_4kb.next(), Some(0x2C0000000 + pages_4kb(1)));
+
+        // 12. a 1gb page followed by some 2mb pages
+        assert_eq!(page_iter_1gb.next(), Some(0x2C0000000));
+        assert_eq!(page_iter_2mb.next(), Some(0x300000000 + pages_2mb(0)));
+        assert_eq!(page_iter_2mb.next(), Some(0x300000000 + pages_2mb(1)));
+
+        // 13. some 4kb pages followed by a 2mb page, a 1gb page, then a 2mb page and a 4kb page
+        assert_eq!(page_iter_4kb.next(), Some(0x340000000 - pages_2mb(1) - pages_4kb(2)));
+        assert_eq!(page_iter_4kb.next(), Some(0x340000000 - pages_2mb(1) - pages_4kb(1)));
+        assert_eq!(page_iter_2mb.next(), Some(0x340000000 - pages_2mb(1)));
+        assert_eq!(page_iter_1gb.next(), Some(0x340000000));
+        assert_eq!(page_iter_2mb.next(), Some(0x380000000));
+        assert_eq!(page_iter_4kb.next(), Some(0x380000000 + pages_2mb(1) + pages_4kb(0)));
+
+        assert_eq!(page_iter_4kb.next(), None);
+        assert_eq!(page_iter_2mb.next(), None);
+        assert_eq!(page_iter_1gb.next(), None);
+    }
+}
