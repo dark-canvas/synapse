@@ -23,6 +23,7 @@ use satus_struct::module_list::ModuleList;
 use pager::Pager;
 
 const KERNEL_START: u64 = 0xFFFFFF8000000000;
+const KERNEL_STACK_SIZE: u64 = 2*1024*1024; // This is completely arbitraty...
 
 #[cfg(not(test))]
 #[panic_handler]
@@ -34,6 +35,7 @@ fn panic(info: &PanicInfo) -> ! {
 #[cfg(not(test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
+
     let config_addr: Address;
     unsafe {
         asm!(
