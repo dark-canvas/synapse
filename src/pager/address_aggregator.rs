@@ -16,8 +16,13 @@ pub struct PageBucket {
 
 #[allow(dead_code)]
 pub trait AddressAggregator {
-    fn mark_available(&mut self, page_addr: Address);
+    // this should be renamed to give() ?
+    fn mark_available(&mut self, page_addr: Address) -> Option<Address>;
+
+    // optimization... instead of giving and then allocatng, just mark as allocated
     fn mark_allocated(&mut self, page_addr: Address);
+    fn take(&mut self, page_addr: Address);
+    // give...?
     fn allocate(&mut self, page_addr: Address);
     fn deallocate(&mut self, page_addr: Address) -> Option<Address>;
 }
@@ -27,6 +32,18 @@ pub trait AddressAggregator {
 /// the larger page to the larger stack.
 /// The aggregate map is indexed by the next largest page size, so for 4kb pages, it's indexed by 2mb pages, 
 /// and for 2mb pages, it's indexed by 1gb pages.
+/// The accounting of allocated and available pages must follow a specific pattern to ensure that taking 
+/// from one stack and providing to another always keeps an accurate count.
+/// Allocating a page:
+///   - allocate += 1
+///   - available -= 1
+/// Freeing a page:
+///   - allocated -= 1 
+///   - available += 1
+/// Having a page taken page:
+///   - available -= 1
+/// Being given a page:
+///   - available += 1
 pub struct PageAggregator<const PAGE_SIZE: usize> {
     pub aggregate_map: &'static mut [PageBucket],
 }
@@ -40,18 +57,38 @@ impl<const PAGE_SIZE: usize>  PageAggregator<PAGE_SIZE> {
             aggregate_map: unsafe { core::slice::from_raw_parts_mut(aggregate_map_base as *mut PageBucket, num_buckets) }
         }
     }
+
+    fn handle_aggregation(&mut self, agg_index: usize) -> Option<Address> {
+        if self.aggregate_map[agg_index].available as usize == ADDRESSES_PER_PAGE {
+            assert_eq!(self.aggregate_map[agg_index].allocated, 0);
+            // we hvae all the pages which make up a larger page
+            // remove them all from our stack 
+            self.aggregate_map[agg_index].available = 0;
+            // and indicate the can be returned to the larger stack
+            let agg_page_addr = (agg_index as Address) * PAGE_SIZE as Address;
+            return Some(agg_page_addr);
+        }
+        None
+    }
 }
 
 impl <const PAGE_SIZE: usize> AddressAggregator for PageAggregator<PAGE_SIZE> {
 
-    fn mark_available(&mut self, page_addr: Address) {
+    fn mark_available(&mut self, page_addr: Address) -> Option<Address> {
         let agg_index = (page_addr as usize / PAGE_SIZE) as usize;
         self.aggregate_map[agg_index].available += 1;
+
+        self.handle_aggregation(agg_index)
     }
 
     fn mark_allocated(&mut self, page_addr: Address) {
         let agg_index = (page_addr as usize / PAGE_SIZE) as usize;
         self.aggregate_map[agg_index].allocated += 1;
+    }
+
+    fn take(&mut self, page_addr: Address) {
+        let agg_index = (page_addr as usize / PAGE_SIZE) as usize;
+        self.aggregate_map[agg_index].available -= 1;
     }
 
     fn allocate(&mut self, page_addr: Address) {
@@ -65,16 +102,7 @@ impl <const PAGE_SIZE: usize> AddressAggregator for PageAggregator<PAGE_SIZE> {
         self.aggregate_map[agg_index].allocated -= 1;
         self.aggregate_map[agg_index].available += 1;
 
-        if self.aggregate_map[agg_index].available as usize == ADDRESSES_PER_PAGE {
-            assert_eq!(self.aggregate_map[agg_index].allocated, 0);
-            // we hvae all the pages which make up a larger page
-            // remove them all from our stack 
-            self.aggregate_map[agg_index].available = 0;
-            // and indicate the can be returned to the larger stack
-            let agg_page_addr = (agg_index as Address) * PAGE_SIZE as Address;
-            return Some(agg_page_addr);
-        }
-        None
+        self.handle_aggregation(agg_index)
     }
 }
 

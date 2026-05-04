@@ -145,26 +145,43 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
         self.available_pages.top()
     }
 
-    pub fn give(&mut self, page: Address) {
-        self.available_pages.push(page);
-        self.aggregate_map.mark_available(page);
+    pub fn give(&mut self, page: Address) -> Option<Address> {
+        self.deallocate_helper(page, true)
     }
 
-    pub fn allocate_page(&mut self) -> Option<Address> 
-    where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
+    pub fn take(&mut self) -> Option<Address> {
+        self.allocate_helper(false)
+    }
 
+    pub fn mark_allocated(&mut self, page_addr: Address) {
+        self.aggregate_map.mark_allocated(page_addr);
+    }
+
+    pub fn allocate_page(&mut self) -> Option<Address>  {
+        self.allocate_helper(true)
+    }
+
+    pub fn deallocate_page(&mut self, page_addr: Address) -> Option<Address> {
+        self.deallocate_helper(page_addr, false)
+    }
+
+    fn allocate_helper(&mut self, track_page: bool) -> Option<Address> {
         if self.available_pages.is_empty() {
             None
         } else {
             let page = self.available_pages.pop().unwrap();
-            self.aggregate_map.allocate(page);
+            if track_page {
+                self.aggregate_map.allocate(page);
+            } else {
+                self.aggregate_map.take(page);
+            }
             Some(page)
         }
     }
 
     // NOTE: it is up to the caller to ensure this page has been previously allocated and is the 
     // proper size for this page stack.
-    pub fn deallocate_page(&mut self, page_addr: Address) -> Option<Address>
+    fn deallocate_helper(&mut self, page_addr: Address, new_addr: bool) -> Option<Address>
     where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
         // align the page address to the page size, just in case
@@ -174,7 +191,10 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
         let mut result = None;
         if PAGE_SIZE != PAGE_SIZE_1GB {
-            result = self.aggregate_map.deallocate(page_addr);
+            result = match(new_addr) {
+                true  => self.aggregate_map.mark_available(page_addr),
+                false => self.aggregate_map.deallocate(page_addr),
+            };
 
             if let Some(bigger_page) = result {
                 let bigger_page_size = (PAGE_SIZE * ADDRESSES_PER_PAGE) as Address;
@@ -337,6 +357,9 @@ mod tests {
             address_aggregator.as_ptr() as Address,
             addresses.iter().copied());
 
+        address_aggregator[base_address as usize / PAGE_SIZE_2MB].allocated = 0;
+        address_aggregator[base_address as usize / PAGE_SIZE_2MB].available = 512;
+
         // we expect the stack to be constructed with all the addresses...
         assert_eq!(address_stack[0], base_address);
         assert_eq!(address_stack[511], top_of_stack);
@@ -365,6 +388,7 @@ mod tests {
             addresses.push(base_address_other_page + (i* PAGE_SIZE_4KB) as Address);
             addresses.push(base_address_aggregate_page + (i * PAGE_SIZE_4KB) as Address);
         }
+
         // no sense continuing if this isn't true...
         assert_eq!(addresses.len(), ADDRESSES_PER_PAGE*2);
 
@@ -374,6 +398,11 @@ mod tests {
             max_pages, 
             address_aggregator.as_ptr() as Address,
             addresses.iter().copied());
+
+        address_aggregator[base_address_aggregate_page as usize / PAGE_SIZE_2MB].allocated = 0;
+        address_aggregator[base_address_aggregate_page as usize / PAGE_SIZE_2MB].available = 512;
+        address_aggregator[base_address_other_page as usize / PAGE_SIZE_2MB].allocated = 0;
+        address_aggregator[base_address_other_page as usize / PAGE_SIZE_2MB].available = 512;
 
         // we expect the stack to be constructed with all the addresses...
         assert_eq!(ps.len(), addresses.len());
