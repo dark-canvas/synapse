@@ -131,6 +131,12 @@ pub struct Pager {
     fb_logger: Mutex< FrameBufferLogger >,
 }
 
+pub fn physical_mirror<T>(addr: T) -> T where T: Into<Address> + From<Address> {
+    let addr = addr.into();
+    let mirrored = addr + PHYSICAL_OFFSET;
+    mirrored.into()
+}
+
 pub fn pages_required(size: usize) -> usize {
     (size + (PAGE_SIZE_4KB - 1)) / PAGE_SIZE_4KB
 }
@@ -216,7 +222,7 @@ impl Pager {
              four_kb_page_allocator.next().map(
                 |addr| {
                     unsafe {  
-                        core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                        core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
                         PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
                     }
                 }
@@ -292,7 +298,7 @@ impl Pager {
                     println!("Acquiring new page for page stack: {}", i);
                     (new_page)().map(|addr| {
                         unsafe {  
-                            core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                            core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
                             PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
                         }
                     })
@@ -559,13 +565,7 @@ impl Pager {
             // clear out the UEFI firmware's identity mapping of physical memory as we have our own starting 
             // at PHYSICAL_OFFSET, and the construction of the page stacks has made all of the 
             // [BOOT|RUNTIME]_SERVICES_[CODE|DATA] sections available, so we can't use them anymore
-            //pl4_table[0].set_unused();
-
-            // map pl4 table into itself for easier virtual to physical mappings
-            // let pl4_entry = &mut pl4_table[510];
-            // pl4_entry.set_addr(pl4_addr, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE );
-            
-            //Self::setup_physical_offset_identity_map();
+            pl4_table[0].set_unused();
 
             Pager { 
                 stack_1gb: Mutex::new( 
@@ -660,7 +660,7 @@ impl Pager {
     fn allocate_page_table(&self) -> Option<PhysFrame::<Size4KiB>> {
         self.allocate_4kb_page().map(|addr| {
             unsafe {  
-                core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
                 PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
             }
         })
@@ -757,7 +757,7 @@ impl Pager {
                     stack_4kb.0.allocate_page().map(
                         |addr| {
                             unsafe {  
-                                core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                                core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
                                 PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
                             }
                         }
@@ -842,11 +842,11 @@ impl Pager {
                 self.stack_4kb.lock().0.allocate_page().map(
                     |addr| {
                         unsafe {  
-                            core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                            core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
                             PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
                         }
                     }
-                )  
+                )
             })
     }
 
@@ -1013,7 +1013,8 @@ impl Pager {
 pub fn run_time_tests(pager: &Pager) {
     // First test that the physical "itentity mapped" region exists at PHYSICAL_OFFSET
     let page = pager.allocate_page(PageType::Page4KB).expect("Must be able to acquire 4kb page");
-    unsafe { core::ptr::write_bytes(page as *mut u8, 0xff, 4096); }
+    println!("Allocated page at 0x{:016x}", page);
+    unsafe { core::ptr::write_bytes(physical_mirror(page) as *mut u8, 0xff, 4096); }
 
     let phys_test_addr = (page + PHYSICAL_OFFSET) as *const u8;
     let phys_test_array: &[u8; 4096] = unsafe {
@@ -1021,7 +1022,7 @@ pub fn run_time_tests(pager: &Pager) {
     };
     assert_eq!(phys_test_array[0], 0xff);
 
-    unsafe { core::ptr::write_bytes(page as *mut u8, 0x80, 4096); }
+    unsafe { core::ptr::write_bytes(physical_mirror(page) as *mut u8, 0x80, 4096); }
     assert_eq!(phys_test_array[0], 0x80);
 
     pager.free_page(PageType::Page4KB, page);
