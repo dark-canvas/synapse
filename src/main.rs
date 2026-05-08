@@ -58,9 +58,6 @@ pub extern "C" fn _start() -> ! {
         println!("module {} -> 0x{:016x} - 0x{:016x} ({} bytes)", i, start, start+size, size);
     }
 
-    //println!("Creating pager...");
-    //let pager = Pager::new(&config);
-
     //let kernel_info = module_list.get_module_info(0).expect("No kernel module found");
     //let kernel_start = kernel_info.get_start_address();
     //let kernel_size = kernel_info.get_size();
@@ -72,7 +69,6 @@ pub extern "C" fn _start() -> ! {
         }
     }
 
-    //pager::run_time_tests(&pager);
     arch::init(&config);
 
     let framebuffer = config.get_framebuffer_address() as *mut u8;
