@@ -1,13 +1,14 @@
 #![no_std]
 #![cfg_attr(not(test), no_main)]
 #![feature(generic_const_exprs)]
+#![feature(abi_x86_interrupt)]
 
 #[cfg(test)]
 extern crate std;
 
 #[macro_use]
 mod logger;
-mod pager;
+mod arch;
 mod stack;
 mod types;
 
@@ -19,8 +20,6 @@ use core::panic::PanicInfo;
 extern crate satus_struct;
 use satus_struct::config::Config;
 use satus_struct::module_list::ModuleList;
-
-use pager::Pager;
 
 const KERNEL_START: u64 = 0xFFFFFF8000000000;
 const KERNEL_STACK_SIZE: u64 = 2*1024*1024; // This is completely arbitraty...
@@ -59,9 +58,6 @@ pub extern "C" fn _start() -> ! {
         println!("module {} -> 0x{:016x} - 0x{:016x} ({} bytes)", i, start, start+size, size);
     }
 
-    println!("Creating pager...");
-    let pager = Pager::new(&config);
-
     //let kernel_info = module_list.get_module_info(0).expect("No kernel module found");
     //let kernel_start = kernel_info.get_start_address();
     //let kernel_size = kernel_info.get_size();
@@ -73,7 +69,7 @@ pub extern "C" fn _start() -> ! {
         }
     }
 
-    pager::run_time_tests(&pager);
+    arch::init(&config);
 
     let framebuffer = config.get_framebuffer_address() as *mut u8;
     for i in 0..(config.get_framebuffer_size() as usize) {
