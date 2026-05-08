@@ -6,7 +6,7 @@
 //! so the larger page can be returned to the larger stack.
 
 use crate::types::Address;
-use crate::pager::page_stack::ADDRESSES_PER_PAGE;
+use super::page_stack::ADDRESSES_PER_PAGE;
 
 #[derive(Copy, Clone)]
 pub struct PageBucket {

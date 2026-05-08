@@ -79,7 +79,7 @@ use mockall::predicate::*;
 
 use crate::stack::{Stack, SimpleStack, EXPAND_UP};
 use crate::types::Address;
-use crate::pager::PageIterator;
+use super::PageIterator;
 
 use super::address_aggregator::{AddressAggregator, PageAggregator};
 use super::VirtualAddress;
