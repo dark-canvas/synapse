@@ -254,8 +254,8 @@ mod tests {
     use std::vec;
     use std::vec::Vec;
     use std::collections::HashSet;
-    use crate::pager::PAGE_SIZE_2MB;
-    use crate::pager::address_aggregator::PageBucket;
+    use crate::arch::x86_64::pager::PAGE_SIZE_2MB;
+    use crate::arch::x86_64::pager::address_aggregator::PageBucket;
 
     #[test]
     fn test_create_stack() {
