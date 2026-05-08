@@ -8,10 +8,10 @@ use self::pager::Pager;
 pub fn init(config: &Config) {
     println!("Initializing x86_64 architecture-specific components...");
 
+    idt::init_idt();
+
     println!("Creating pager...");
     let pager = Pager::new(&config);
-
-    idt::init_idt();
     
     pager::run_time_tests(&pager);
 }
