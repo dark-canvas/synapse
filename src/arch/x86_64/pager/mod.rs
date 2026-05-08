@@ -1104,8 +1104,8 @@ mod tests {
     use std::mem::size_of;
     use std::vec;
 
-    use crate::pager::address_aggregator::PageBucket;
-    use crate::pager::page_stack::ADDRESSES_PER_PAGE;
+    use crate::arch::x86_64::pager::address_aggregator::PageBucket;
+    use crate::arch::x86_64::pager::page_stack::ADDRESSES_PER_PAGE;
 
     struct TestPagerConfig {
         count_4kb_pages: usize,
