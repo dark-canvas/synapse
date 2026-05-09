@@ -65,4 +65,7 @@ lazy_static! {
 
 pub fn init_idt() {
     IDT.load();
+
+    // quick test...
+    x86_64::instructions::interrupts::int3(); 
 }
