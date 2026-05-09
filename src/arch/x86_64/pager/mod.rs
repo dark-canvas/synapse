@@ -50,6 +50,7 @@ use x86_64::structures::paging::Size4KiB;
 use x86_64::structures::paging::PhysFrame;
 use x86_64::structures::paging::PageTable;
 use x86_64::structures::paging::PageTableFlags;
+use x86_64::structures::paging::page_table::PageTableEntry;
 use x86_64::PhysAddr;
 
 use satus_struct::config::Config;
@@ -131,6 +132,12 @@ pub struct Pager {
     fb_logger: Mutex< FrameBufferLogger >,
 }
 
+pub fn physical_mirror<T>(addr: T) -> T where T: Into<Address> + From<Address> {
+    let addr = addr.into();
+    let mirrored = addr + PHYSICAL_OFFSET;
+    mirrored.into()
+}
+
 pub fn pages_required(size: usize) -> usize {
     (size + (PAGE_SIZE_4KB - 1)) / PAGE_SIZE_4KB
 }
@@ -138,7 +145,13 @@ pub fn pages_required(size: usize) -> usize {
 pub fn get_pl4_table() -> &'static mut PageTable {
     unsafe {
         let (pl4_frame, _flags) = Cr3::read();
-        &mut *(pl4_frame.start_address().as_u64() as *mut PageTable)
+        &mut *(physical_mirror(pl4_frame.start_address().as_u64()) as *mut PageTable)
+    }
+}
+
+fn entry_to_table(entry: &PageTableEntry) -> &'static mut PageTable {
+    unsafe {
+        &mut *(physical_mirror(entry.addr().as_u64()) as *mut PageTable)
     }
 }
 
@@ -216,7 +229,7 @@ impl Pager {
              four_kb_page_allocator.next().map(
                 |addr| {
                     unsafe {  
-                        core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                        core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
                         PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
                     }
                 }
@@ -292,7 +305,7 @@ impl Pager {
                     println!("Acquiring new page for page stack: {}", i);
                     (new_page)().map(|addr| {
                         unsafe {  
-                            core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                            core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
                             PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
                         }
                     })
@@ -301,173 +314,6 @@ impl Pager {
         }
 
         stack_base_address + (required_stack_size_in_pages * PAGE_SIZE_4KB) as Address
-    }
-
-    fn ensure_writable(virtual_addr: Address) -> bool {
-        let pl4_index = (virtual_addr as usize >> 39) & 0o777;
-        let pl3_index = (virtual_addr as usize >> 30) & 0o777;
-        let pl2_index = (virtual_addr as usize >> 21) & 0o777;
-        let pl1_index = (virtual_addr as usize >> 12) & 0o777;
-
-        println!("        ensure writable 0x{:016x}", virtual_addr);
-
-        unsafe {
-            let pl4_table = get_pl4_table();
-
-            let pl4_entry = &pl4_table[pl4_index];
-            if pl4_entry.is_unused() {
-                println!("        not mapped in pl4");
-                return false;
-            }
-
-            // page directory entry is 4kb page...
-            let pl3_table = &mut *(pl4_entry.addr().as_u64() as *mut PageTable);
-            let pl3_entry = &pl3_table[pl3_index];
-            if pl3_entry.is_unused() {
-                println!("        not mapped in pl3");
-                return false;
-            }
-
-            // if this entry isn't writable, we need to set it to be writable, but we can't do that 
-            // unless the page containing this entry is writable...
-            if !pl3_entry.flags().contains(PageTableFlags::WRITABLE) {
-                println!("        pl3 set writable");
-                if !pl3_entry.flags().contains(PageTableFlags::WRITABLE) {
-                    Self::ensure_writable(pl4_entry.addr().as_u64());
-                }
-                pl3_entry.flags().insert(PageTableFlags::WRITABLE);
-            }
-
-            if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
-                println!("        huge page; done");
-                return true;
-            }
-
-
-            // this could be a 2mb page...
-            let pl2_table = &mut *(pl3_entry.addr().as_u64() as *mut PageTable);
-            let pl2_entry = &pl2_table[pl2_index];
-            if pl2_entry.is_unused() {
-                println!("        not mapped in pl2");
-                return false;
-            }
-
-            if !pl2_entry.flags().contains(PageTableFlags::WRITABLE) {
-                println!("        set writable pl2");
-                if !pl3_entry.flags().contains(PageTableFlags::WRITABLE) {
-                    Self::ensure_writable(pl3_entry.addr().as_u64());
-                }
-                pl2_entry.flags().insert(PageTableFlags::WRITABLE);
-            }
-
-            if pl2_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
-                println!("        huge page pl2; done");
-                return true;
-            }
-
-            let pl1_table = &mut *(pl2_entry.addr().as_u64() as *mut PageTable);
-            let pl1_entry = &pl1_table[pl1_index];
-            if pl1_entry.is_unused() {
-                println!("        not mapped in pl1");
-                return false;
-            }
-
-            if !pl1_entry.flags().contains(PageTableFlags::WRITABLE) {
-                println!("        set writable pl1");
-                if !pl2_entry.flags().contains(PageTableFlags::WRITABLE) {
-                    Self::ensure_writable(pl2_entry.addr().as_u64());
-                }
-                pl1_entry.flags().insert(PageTableFlags::WRITABLE);
-            }
-            return true;
-        }
-    }
-
-    fn setup_physical_offset_identity_map() {
-        // Physical memory (due to the UEFI firmware and bootloader) is currently identity mapped.
-        // We've artificially limited the kernel's support for 512MB of memory, which means the entire contents of physical, 
-        // identity mapped, memory is at pl4_table[0].
-        // We want to keep this (we want the ability to read/write directly to physical memory in order to create new, or edit 
-        // existing, page tables), but we'll want to remap that region of memory with every new proceess so we'll copy 
-        // it up higher in the table (at index ...) which means we can then access physical memory by reading/writing to 
-        // the physical address + PHYSICAL_OFFSET (0xFFFFFF0000000000)
-        let mut pl4_table = get_pl4_table();
-
-        let pl4_first_entry = pl4_table[0].addr();
-        pl4_table[510].set_addr(
-            pl4_first_entry, 
-            PageTableFlags::GLOBAL | PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE );
-        // TODO: we need to go through and ensure all the other page tables which the UEFI firmware created are marked as 
-        // GLOBAL and WRITABLE
-        // We can then unmap everything in the original identity map
-
-        unsafe {
-            println!("Iterating...");
-            let physical_map_table_entry = &mut pl4_table[510];
-            println!("Entry {:?}", physical_map_table_entry);
-            let pl3_table = &mut *(physical_map_table_entry.addr().as_u64() as *mut PageTable);
-            println!("Table {:?}", pl3_table);
-
-            for (_i, pl3_entry) in pl3_table.iter_mut().enumerate() {
-                if !pl3_entry.is_unused() {
-                    println!("  pl3 entry {}: {:?}", _i, pl3_entry);
-
-                    let mut flags = pl3_entry.flags();
-                    if flags & PageTableFlags::WRITABLE != PageTableFlags::WRITABLE {
-                        println!("    setting writable bit");
-                        Self::ensure_writable(physical_map_table_entry.addr().as_u64());
-                        flags |= /*PageTableFlags::GLOBAL |*/ PageTableFlags::WRITABLE /*| PageTableFlags::NO_EXECUTE */;
-                        pl3_entry.set_flags(flags);
-                    }
-
-                    if flags & PageTableFlags::HUGE_PAGE == PageTableFlags::HUGE_PAGE {
-                        println!("    huge page");
-                        continue;
-                    }
-
-                    let pl2_table = &mut *(pl3_entry.addr().as_u64() as *mut PageTable);
-                    for (_j, pl2_entry) in pl2_table.iter_mut().enumerate() {
-                        if !pl2_entry.is_unused() {
-                            println!("    pl2 entry {}: {:?}", _j, pl2_entry);
-
-                            let mut flags = pl2_entry.flags();
-                            if flags & PageTableFlags::WRITABLE != PageTableFlags::WRITABLE {
-                                println!("      setting writable bit");
-                                Self::ensure_writable(pl3_entry.addr().as_u64());
-                                flags |= PageTableFlags::GLOBAL | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
-                                pl2_entry.set_flags(flags);
-                            }
-
-                            if flags & PageTableFlags::HUGE_PAGE == PageTableFlags::HUGE_PAGE {
-                                println!("      huge page");
-                                continue;
-                            }
-                            //info!("  Page Table Entry {}: {:?}", j, entry);
-
-                            let pl1_table = &mut *(pl2_entry.addr().as_u64() as *mut PageTable);
-                            for (_k, pl1_entry) in pl1_table.iter_mut().enumerate() {
-                                if !pl1_entry.is_unused() {
-                                    println!("      pl1 entry {}: {:?}", _k, pl1_entry);
-
-                                    let mut flags = pl1_entry.flags();
-                                    if flags & PageTableFlags::WRITABLE != PageTableFlags::WRITABLE {
-                                        println!("        setting writable bit");
-                                        Self::ensure_writable(pl2_entry.addr().as_u64());
-                                        flags |= PageTableFlags::GLOBAL | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
-                                        pl1_entry.set_flags(flags);
-                                    }
-                                    //info!("    Page Table 2 Entry {}: {:?}", k, entry);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            println!("Make everything writable; flushing cr3");
-            // invalidate everything by re-loading cr3
-            let (pl4_frame, flags) = Cr3::read();
-            Cr3::write(pl4_frame, flags);
-        }
     }
 
     /// Returns an instance of Pager with any non-specific configuration done.
@@ -559,13 +405,7 @@ impl Pager {
             // clear out the UEFI firmware's identity mapping of physical memory as we have our own starting 
             // at PHYSICAL_OFFSET, and the construction of the page stacks has made all of the 
             // [BOOT|RUNTIME]_SERVICES_[CODE|DATA] sections available, so we can't use them anymore
-            //pl4_table[0].set_unused();
-
-            // map pl4 table into itself for easier virtual to physical mappings
-            // let pl4_entry = &mut pl4_table[510];
-            // pl4_entry.set_addr(pl4_addr, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE );
-            
-            //Self::setup_physical_offset_identity_map();
+            pl4_table[0].set_unused();
 
             Pager { 
                 stack_1gb: Mutex::new( 
@@ -660,7 +500,7 @@ impl Pager {
     fn allocate_page_table(&self) -> Option<PhysFrame::<Size4KiB>> {
         self.allocate_4kb_page().map(|addr| {
             unsafe {  
-                core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
                 PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
             }
         })
@@ -757,7 +597,7 @@ impl Pager {
                     stack_4kb.0.allocate_page().map(
                         |addr| {
                             unsafe {  
-                                core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                                core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
                                 PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
                             }
                         }
@@ -799,7 +639,7 @@ impl Pager {
             }
 
             // page directory entry is 4kb page...
-            let pl3_table = &mut *(pl4_entry.addr().as_u64() as *mut PageTable);
+            let pl3_table = entry_to_table(&pl4_entry);
             let pl3_entry = &pl3_table[pl3_index];
             if pl3_entry.is_unused() {
                 return None;
@@ -810,7 +650,7 @@ impl Pager {
             }
 
             // this could be a 2mb page...
-            let pl2_table = &mut *(pl3_entry.addr().as_u64() as *mut PageTable);
+            let pl2_table = entry_to_table(&pl3_entry);
             let pl2_entry = &pl2_table[pl2_index];
             if pl2_entry.is_unused() {
                 return None;
@@ -820,7 +660,7 @@ impl Pager {
                 return Some(pl2_entry.addr().as_u64() as usize + (virtual_addr & 0x1FFFFF));
             }
 
-            let pl1_table = &mut *(pl2_entry.addr().as_u64() as *mut PageTable);
+            let pl1_table = entry_to_table(&pl2_entry);
             let pl1_entry = &pl1_table[pl1_index];
             if pl1_entry.is_unused() {
                 return None;
@@ -842,11 +682,11 @@ impl Pager {
                 self.stack_4kb.lock().0.allocate_page().map(
                     |addr| {
                         unsafe {  
-                            core::ptr::write_bytes(addr as *mut u8, 0, 0x1000);
+                            core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
                             PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
                         }
                     }
-                )  
+                )
             })
     }
 
@@ -879,7 +719,7 @@ impl Pager {
                 //info!("Set PML4 entry {} to new frame at {:?}", pl4_index, new_frame.start_address());
             }
 
-            let pl3_table = &mut *(pl4_entry.addr().as_u64() as *mut PageTable);
+            let pl3_table = entry_to_table(&pl4_entry);
             let pl3_entry = &mut pl3_table[pl3_index];
             if pl3_entry.is_unused() {
                 if page_type == PageType::Page1GB {
@@ -893,7 +733,7 @@ impl Pager {
                 return Err("Virtual address already mapped");
             }
 
-            let pl2_table = &mut *(pl3_entry.addr().as_u64() as *mut PageTable);
+            let pl2_table = entry_to_table(&pl3_entry);
             let pl2_entry = &mut pl2_table[pl2_index];
             if pl2_entry.is_unused() {
                 if page_type == PageType::Page2MB {
@@ -907,7 +747,7 @@ impl Pager {
                 return Err("Virtual address already mapped");
             }
 
-            let pl1_table = &mut *(pl2_entry.addr().as_u64() as *mut PageTable);
+            let pl1_table = entry_to_table(&pl2_entry);
             let pl1_entry = &mut pl1_table[pl1_index];
             if !pl1_entry.is_unused() {
                 return Err("Virtual address already mapped");
@@ -935,7 +775,7 @@ impl Pager {
                 pl4_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
             }
 
-            let pl3_table = &mut *(pl4_entry.addr().as_u64() as *mut PageTable);
+            let pl3_table = entry_to_table(&pl4_entry);
             let pl3_entry = &mut pl3_table[pl3_index];
             if pl3_entry.is_unused() {
                 if page_type == PageType::Page1GB {
@@ -953,7 +793,7 @@ impl Pager {
                 }
             }
 
-            let pl2_table = &mut *(pl3_entry.addr().as_u64() as *mut PageTable);
+            let pl2_table = entry_to_table(&pl3_entry);
             let pl2_entry = &mut pl2_table[pl2_index];
             if pl2_entry.is_unused() {
                 if page_type == PageType::Page2MB {
@@ -971,7 +811,7 @@ impl Pager {
                 }
             }
 
-            let pl1_table = &mut *(pl2_entry.addr().as_u64() as *mut PageTable);
+            let pl1_table = entry_to_table(&pl2_entry);
             let pl1_entry = &mut pl1_table[pl1_index];
             if !pl1_entry.is_unused() {
                 return Ok(false)
@@ -982,38 +822,13 @@ impl Pager {
             Ok(true)
         }
     } 
-
-    pub fn output_mmap(&self) {
-        unsafe {
-            let pl4_table = get_pl4_table();
-
-            for (_i, entry) in pl4_table.iter().enumerate() {
-                if !entry.is_unused() {
-                    //info!("pl4 Entry {}: {:?}", i, entry);
-
-                    let page_table = &mut *(entry.addr().as_u64() as *mut PageTable);
-                    for (_j, entry) in page_table.iter().enumerate() {
-                        if !entry.is_unused() {
-                            //info!("  Page Table Entry {}: {:?}", j, entry);
-
-                            let page_table_2 = &mut *(entry.addr().as_u64() as *mut PageTable);
-                            for (_k, entry) in page_table_2.iter().enumerate() {
-                                if !entry.is_unused() {
-                                    //info!("    Page Table 2 Entry {}: {:?}", k, entry);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 pub fn run_time_tests(pager: &Pager) {
     // First test that the physical "itentity mapped" region exists at PHYSICAL_OFFSET
     let page = pager.allocate_page(PageType::Page4KB).expect("Must be able to acquire 4kb page");
-    unsafe { core::ptr::write_bytes(page as *mut u8, 0xff, 4096); }
+    println!("Allocated page at 0x{:016x}", page);
+    unsafe { core::ptr::write_bytes(physical_mirror(page) as *mut u8, 0xff, 4096); }
 
     let phys_test_addr = (page + PHYSICAL_OFFSET) as *const u8;
     let phys_test_array: &[u8; 4096] = unsafe {
@@ -1021,7 +836,7 @@ pub fn run_time_tests(pager: &Pager) {
     };
     assert_eq!(phys_test_array[0], 0xff);
 
-    unsafe { core::ptr::write_bytes(page as *mut u8, 0x80, 4096); }
+    unsafe { core::ptr::write_bytes(physical_mirror(page) as *mut u8, 0x80, 4096); }
     assert_eq!(phys_test_array[0], 0x80);
 
     pager.free_page(PageType::Page4KB, page);
