@@ -25,7 +25,7 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(
 
     // TODO: need a better/common way to signal EOI (for all interrupts) and in the x2apic mod
     unsafe { 
-        let mut apic_eoi_msr = x86_64::registers::model_specific::Msr::new(0x80b) };
+        let mut apic_eoi_msr = x86_64::registers::model_specific::Msr::new(0x80b);
         apic_eoi_msr.write(0x0)
     };
 }
