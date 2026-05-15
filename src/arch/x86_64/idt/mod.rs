@@ -4,6 +4,7 @@ use lazy_static::lazy_static;
 use x86_64::structures::idt::InterruptDescriptorTable;
 
 use super::gdt;
+use super::pit::timer_interrupt_handler;
 
 use self::handlers::default_handler_x86;
 use self::handlers::diverging_handler_x86;
@@ -34,6 +35,38 @@ use self::handlers::BreakpointMetaData;
 use self::handlers::NonMaskableInterruptMetaData;
 use self::handlers::DebugMetaData;
 use self::handlers::DivideByZeroMetaData;
+
+// TODO: use this in the interrupt meta data structs?
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum InterruptIndex {
+    DivideByZero = 0,
+    Debug = 1,
+    NonMaskableInterrupt = 2,
+    Breakpoint = 3,
+    Overflow = 4,
+    BoundRangeExceeded = 5,
+    InvalidOpcode = 6,
+    DeviceNotAvailable = 7,
+    DoubleFault = 8,
+    InvalidTss = 10,
+    SegmentNotPresent = 11,
+    StackSegmentFault = 12,
+    GeneralProtectionFault = 13,
+    PageFault = 14,
+    X87FloatingPoint = 16,
+    AlignmentCheck = 17,
+    MachineCheck = 18,
+    SimdFloatingPoint = 19,
+    Virtualization = 20,
+    CpProtectionException = 21,
+    HVInjectionException = 22,
+    VMMCommunicationException = 23,
+    SecurityException = 30,
+    Timer = 32,
+    Error = 33,
+    Spurious = 34,
+}
 
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
@@ -72,6 +105,7 @@ lazy_static! {
         idt.hv_injection_exception.set_handler_fn(default_handler_x86::<HVInjectionExceptionMetaData>);
         idt.vmm_communication_exception.set_handler_fn(default_handler_with_error_code_x86::<VMMCommunicationExceptionMetaData>);
         idt.security_exception.set_handler_fn(default_handler_with_error_code_x86::<SecurityExceptionMetaData>);
+        idt[InterruptIndex::Timer as u8].set_handler_fn(timer_interrupt_handler);
         idt
     };
 }
