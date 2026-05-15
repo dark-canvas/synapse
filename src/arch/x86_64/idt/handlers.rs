@@ -285,6 +285,6 @@ impl InterruptMetaData for VMMCommunicationExceptionMetaData {
 }
 
 impl InterruptMetaData for SecurityExceptionMetaData {
-    const INTERRUPT_NUMBER: u8 = 28;
+    const INTERRUPT_NUMBER: u8 = 30;
     const NAME: &'static str = "Security Exception";
 }
