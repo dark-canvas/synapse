@@ -13,6 +13,7 @@ panic = "abort"
 lazy_static = { version = "1.5.0", features = [ "spin_no_std" ] }
 satus-struct = { git = "https://github.com/dark-canvas/satus-struct" }
 spin = "0.10.0"
+x2apic = "0.5.0"
 x86_64 = { version = "0.15.4", default-features = false, features = [ "instructions", "abi_x86_interrupt" ] }
 
 [dev-dependencies]
