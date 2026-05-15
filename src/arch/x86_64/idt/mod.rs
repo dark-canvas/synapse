@@ -3,6 +3,8 @@ pub mod handlers;
 use lazy_static::lazy_static;
 use x86_64::structures::idt::InterruptDescriptorTable;
 
+use super::gdt;
+
 use self::handlers::default_handler_x86;
 use self::handlers::diverging_handler_x86;
 use self::handlers::default_handler_with_error_code_x86;
@@ -37,14 +39,22 @@ lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
         idt.divide_error.set_handler_fn(default_handler_x86::<DivideByZeroMetaData>);
-        idt.debug.set_handler_fn(default_handler_x86::<DebugMetaData>);
-        idt.non_maskable_interrupt.set_handler_fn(default_handler_x86::<NonMaskableInterruptMetaData>);
+        unsafe {
+            idt.debug.set_handler_fn(default_handler_x86::<DebugMetaData>)
+                     .set_stack_index(gdt::DEBUG_STACK_INDEX);
+            idt.non_maskable_interrupt.set_handler_fn(default_handler_x86::<NonMaskableInterruptMetaData>)
+                                    .set_stack_index(gdt::NMI_STACK_INDEX);
+        }
+
         idt.breakpoint.set_handler_fn(default_handler_x86::<BreakpointMetaData>);
         idt.overflow.set_handler_fn(default_handler_x86::<OverflowMetaData>);
         idt.bound_range_exceeded.set_handler_fn(default_handler_x86::<BoundRangeExceededMetaData>);
         idt.invalid_opcode.set_handler_fn(default_handler_x86::<InvalidOpcodeMetaData>);
         idt.device_not_available.set_handler_fn(default_handler_x86::<DeviceNotAvailableMetaData>);
-        idt.double_fault.set_handler_fn(diverging_handler_with_error_code_x86::<DoubleFaultMetaData>);
+        unsafe {
+            idt.double_fault.set_handler_fn(diverging_handler_with_error_code_x86::<DoubleFaultMetaData>)
+                            .set_stack_index(gdt::DOUBLE_FAULT_STACK_INDEX);
+        }
         idt.invalid_tss.set_handler_fn(default_handler_with_error_code_x86::<InvalidTssMetaData>);
         idt.segment_not_present.set_handler_fn(default_handler_with_error_code_x86::<SegmentNotPresentMetaData>);
         idt.stack_segment_fault.set_handler_fn(default_handler_with_error_code_x86::<StackSegmentFaultMetaData>);
@@ -52,7 +62,10 @@ lazy_static! {
         idt.page_fault.set_handler_fn(page_fault_handler::<PageFaultMetaData>);
         idt.x87_floating_point.set_handler_fn(default_handler_x86::<X87FloatingPointMetaData>);
         idt.alignment_check.set_handler_fn(default_handler_with_error_code_x86::<AlignmentCheckMetaData>);
-        idt.machine_check.set_handler_fn(diverging_handler_x86::<MachineCheckMetaData>);
+        unsafe {
+            idt.machine_check.set_handler_fn(diverging_handler_x86::<MachineCheckMetaData>)
+                             .set_stack_index(gdt::MCE_STACK_INDEX);
+        }
         idt.simd_floating_point.set_handler_fn(default_handler_x86::<SimdFloatingPointMetaData>);
         idt.virtualization.set_handler_fn(default_handler_x86::<VirtualizationMetaData>);
         idt.cp_protection_exception.set_handler_fn(default_handler_with_error_code_x86::<CpProtectionExceptionMetaData>);
@@ -67,5 +80,5 @@ pub fn init_idt() {
     IDT.load();
 
     // quick test...
-    x86_64::instructions::interrupts::int3(); 
+    //x86_64::instructions::interrupts::int3(); 
 }
