@@ -57,9 +57,13 @@ use satus_struct::config::Config;
 use satus_struct::module_list::ModuleList;
 use satus_struct::memory_map::{MemoryMap, MemoryRegionType};
 
+use crate::errors::ErrCode;
+use crate::pager::PagerError;
+
 use crate::KERNEL_START;
 use crate::KERNEL_STACK_SIZE;
 
+use crate::pager::Pager as PagerInterface;
 use crate::types::Address;
 use crate::stack::SimpleStack;
 use crate::logger::FrameBufferLogger;
@@ -106,10 +110,10 @@ const PAGE_AGGREGATOR_2MB_BASE: Address = 0xFFFFFFD040000000;
 const PAGE_AGGREGATOR_1GB_BASE: Address = 0xFFFFFFE000200000;
 const PAGE_AGGREGATOR_512GB_BASE: Address = 0xFFFFFFE000202000;
 
-#[derive(Copy, Clone)]
-pub struct PhysicalAddress(Address);
-#[derive(Copy, Clone)]
-pub struct VirtualAddress(Address);
+#[derive(Copy, Clone, Debug)]
+pub struct PhysicalAddress(pub Address);
+#[derive(Copy, Clone, Debug)]
+pub struct VirtualAddress(pub Address);
 
 #[derive(PartialEq, Copy, Clone)]
 pub enum PageType {
@@ -624,11 +628,11 @@ impl Pager {
         }
     }
 
-    pub fn virtual_to_physical(&self, virtual_addr: usize) -> Option<usize> {
-        let pl4_index = (virtual_addr >> 39) & 0o777;
-        let pl3_index = (virtual_addr >> 30) & 0o777;
-        let pl2_index = (virtual_addr >> 21) & 0o777;
-        let pl1_index = (virtual_addr >> 12) & 0o777;
+    pub fn virtual_to_physical(&self, virtual_addr: VirtualAddress) -> Option<PhysicalAddress> {
+        let pl4_index = (virtual_addr.0 as usize >> 39) & 0o777;
+        let pl3_index = (virtual_addr.0 as usize >> 30) & 0o777;
+        let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
+        let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
 
         unsafe {
             let pl4_table = get_pl4_table();
@@ -646,7 +650,7 @@ impl Pager {
             }
 
             if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
-                return Some(pl3_entry.addr().as_u64() as usize + (virtual_addr & 0x3FFFFFFF));
+                return Some(PhysicalAddress(pl3_entry.addr().as_u64() + (virtual_addr.0 & 0x3FFFFFFF)));
             }
 
             // this could be a 2mb page...
@@ -657,7 +661,7 @@ impl Pager {
             }
 
             if pl2_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
-                return Some(pl2_entry.addr().as_u64() as usize + (virtual_addr & 0x1FFFFF));
+                return Some(PhysicalAddress(pl2_entry.addr().as_u64() + (virtual_addr.0 & 0x1FFFFF)));
             }
 
             let pl1_table = entry_to_table(&pl2_entry);
@@ -666,7 +670,7 @@ impl Pager {
                 return None;
             }
 
-            Some(pl1_entry.addr().as_u64() as usize + (virtual_addr & 0xFFF))
+            Some(PhysicalAddress(pl1_entry.addr().as_u64() + (virtual_addr.0 & 0xFFF)))
         }
     }
 
@@ -902,6 +906,30 @@ pub fn run_time_tests(pager: &Pager) {
             pager.free_4kb_page(address - PHYSICAL_OFFSET);
             address = next_page;
         }
+    }
+}
+
+impl PagerInterface for Pager {
+    fn get_page_size(&self) -> usize {
+        4096
+    }
+    fn allocate_physical(&self) -> Result<PhysicalAddress, ErrCode> { 
+        self.allocate_4kb_page().map(PhysicalAddress).ok_or(ErrCode::OutOfMemory)
+    }
+    fn free_physical(&self, addr: PhysicalAddress) -> Result<(), ErrCode> { 
+        self.free_4kb_page(addr.0);
+        Ok(())
+    }
+    fn allocate_virtual(&self, num: usize, to_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode> { Err(ErrCode::Unimplemented) }
+    fn free_virtual(&self, num: usize, base_addr: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn map_physical_to_virtual(&self, phys: PhysicalAddress, virt: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn get_virtual_address(&self, addr: PhysicalAddress) -> Result<VirtualAddress, ErrCode> { 
+        Ok(VirtualAddress(addr.0 + PHYSICAL_OFFSET))
+    }
+    fn get_physical_address(&self, addr: VirtualAddress) -> Result<PhysicalAddress, ErrCode> {
+        self.virtual_to_physical(addr).ok_or(
+            ErrCode::Pager(PagerError::UnmappedVirtualAddress(addr))
+        )
     }
 }
 
