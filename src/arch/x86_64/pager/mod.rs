@@ -1087,6 +1087,7 @@ mod tests {
                             stack_4kb_memory_addr_top
                         )
                     ),
+                    kernel_cr3: 0,
                     fb_logger: Mutex::new(
                         FrameBufferLogger::new(0x0 as Address, 800, 600, 3200).disable()
                     ),
