@@ -113,6 +113,19 @@ impl<T> PageBasedList<T> {
         Ok(())
     }
 
+    pub fn head(&self) -> Option<&T> {
+        self.head.map(|addr| unsafe {
+            let data_ptr = (addr + mem::size_of::<Address>() as u64) as *const T;
+            &*data_ptr
+        })
+    }
+
+    pub fn head_ptr(&self) -> Option<*mut T> {
+        self.head.map(|addr| {
+            (addr + mem::size_of::<Address>() as u64) as *mut T
+        })
+    }
+
     pub fn iter(&self) -> PageBasedIterator<'_, T> {
         PageBasedIterator {
             current: self.head,

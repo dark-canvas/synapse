@@ -1,7 +1,9 @@
 #![no_std]
 #![cfg_attr(not(test), no_main)]
-#![feature(generic_const_exprs)]
 #![feature(abi_x86_interrupt)]
+#![feature(core_intrinsics)]
+//#![feature(return_address)]
+#![feature(generic_const_exprs)]
 
 #[cfg(test)]
 extern crate std;
