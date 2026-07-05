@@ -249,7 +249,7 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
 
     /// Returns an iterator that iterates the items on the stack in the order 
     /// which they were pushed onto the stack
-    pub fn iter(&self) -> StackIterator<T, STACK_TYPE> {
+    pub fn iter(&self) -> StackIterator<'_, T, STACK_TYPE> {
         StackIterator { 
             stack: self,
             num: 0,
@@ -259,7 +259,7 @@ impl<'a, T: Clone + Copy + PartialEq, const STACK_TYPE: bool> Stack<'a, T, STACK
 
     /// Returns an iterator that iterates the items on the stack in the reverse 
     /// order that they were added (i.e., as if the stack were continually popped)
-    pub fn reverse_iter(&self) -> StackIterator<T, STACK_TYPE> {
+    pub fn reverse_iter(&self) -> StackIterator<'_, T, STACK_TYPE> {
         self.iter().rev()
     }
 }

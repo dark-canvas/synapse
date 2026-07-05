@@ -11,8 +11,15 @@ At the kernel level, you program the PIT (Programmable Interval Timer) or APIC t
 */
 
 use core::arch::asm;
+use x86_64::VirtAddr;
 use x86_64::structures::idt::InterruptStackFrame;
 use x86_64::registers::model_specific::Msr;
+use x86_64::registers::rflags::RFlags;
+use super::scheduler::task::Task;
+use super::scheduler::CURRENT_TASK;
+use super::util::register_snapshot::RegisterSnapshot;
+use crate::get_register_snapshot;
+use crate::restore_register_snapshot;
 
 // Port delcarations
 const TIMER0_CNTR: u16 = 0x40;
@@ -46,7 +53,14 @@ const PIT_FREQ: u32 = 0x1234DD;
 pub extern "x86-interrupt" fn timer_interrupt_handler(
     stack_frame: InterruptStackFrame)
 {
-    // NOP
+    // Safe off the current task's state so that we can resume it later
+    /*
+    unsafe {
+        (*CURRENT_TASK).registers = get_register_snapshot!();
+        (*CURRENT_TASK).registers.rip = stack_frame.instruction_pointer.as_u64();
+        (*CURRENT_TASK).registers.rflags = stack_frame.cpu_flags.bits();
+    }
+    */
 
     // Prior to executing this interrupt haandler, the processor would have pushed the following onto the stack:
     // 1. The current instruction pointer (RIP) and code segment (CS)
@@ -70,6 +84,22 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(
         let mut apic_eoi_msr = x86_64::registers::model_specific::Msr::new(0x80b);
         apic_eoi_msr.write(0x0)
     };
+
+    // TODO: this doesn't work...
+    /*
+    unsafe {
+        // restore registers and return to the "next" task (it's still the same one for now)
+        let mut next_stack_frame = InterruptStackFrame::new(
+            VirtAddr::new((*CURRENT_TASK).registers.rip),
+            stack_frame.code_segment,
+            RFlags::from_bits_truncate((*CURRENT_TASK).registers.rflags),
+            VirtAddr::new((*CURRENT_TASK).registers.rsp),
+            stack_frame.stack_segment,
+        );
+        restore_register_snapshot!(&(*CURRENT_TASK).registers);
+        next_stack_frame.iretq();
+    }
+    */
 }
 
 fn timer_set_frequency(freq: u32) {

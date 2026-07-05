@@ -44,6 +44,7 @@ pub mod address_aggregator;
 
 use spin::Mutex;
 use core::fmt::Write;
+use core::ops::Add;
 
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::Size4KiB;
@@ -81,6 +82,8 @@ use crate::logger::LOG_AGGREGATE_1GB;
 use self::page_stack::{PageStack, PageMapper};
 use self::page_iterator::PageIterator;
 
+use super::X86_PAGER;
+use super::scheduler::yield_task;
 
 pub const PAGER_MAX_SUPPORTED_MEMORY: usize = 512*1024*1024*1024; // 512GB
 
@@ -110,10 +113,27 @@ const PAGE_AGGREGATOR_2MB_BASE: Address = 0xFFFFFFD040000000;
 const PAGE_AGGREGATOR_1GB_BASE: Address = 0xFFFFFFE000200000;
 const PAGE_AGGREGATOR_512GB_BASE: Address = 0xFFFFFFE000202000;
 
+// TODO: move these into the common pager space (not x86_64 specific)
 #[derive(Copy, Clone, Debug)]
 pub struct PhysicalAddress(pub Address);
 #[derive(Copy, Clone, Debug)]
 pub struct VirtualAddress(pub Address);
+
+impl Add<usize> for VirtualAddress {
+    type Output = VirtualAddress;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        VirtualAddress(self.0 + rhs as Address)
+    }
+}
+
+impl Add<usize> for PhysicalAddress {
+    type Output = PhysicalAddress;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        PhysicalAddress(self.0 + rhs as Address)
+    }
+}
 
 #[derive(PartialEq, Copy, Clone)]
 pub enum PageType {
@@ -133,6 +153,7 @@ pub struct Pager {
     stack_1gb: Mutex< (PageStack::<PAGE_SIZE_1GB>, Address) >,
     stack_2mb: Mutex< (PageStack::<PAGE_SIZE_2MB>, Address) >,
     stack_4kb: Mutex< (PageStack::<PAGE_SIZE_4KB>, Address) >,
+    kernel_cr3: u64,
     fb_logger: Mutex< FrameBufferLogger >,
 }
 
@@ -403,6 +424,9 @@ impl Pager {
                     kernel_physical_start,
                     four_kb_page_allocator.get_current().unwrap_or(required_base));
 
+        let (addr, flags) = Cr3::read_raw();
+        let cr3_value = addr.start_address().as_u64() | flags as u64;
+
         unsafe {
             let pl4_table = &mut *(pl4_frame.start_address().as_u64() as *mut PageTable);
             
@@ -433,9 +457,14 @@ impl Pager {
                         top_of_4kb_stack
                     )
                 ),
+                kernel_cr3: cr3_value,
                 fb_logger: Mutex::new(fb_logger),
             }
         }
+    }
+
+    pub fn get_kernel_cr3(&self) -> u64 {
+        self.kernel_cr3
     }
 
     // TODO: need to determine how to properly account for borrowed pages?
@@ -871,6 +900,8 @@ pub fn run_time_tests(pager: &Pager) {
             }
         }
         last_page = page;
+
+        yield_task();
     }
 
     println!("Allocated all pages; now freeing starting at {}", first_page.unwrap_or(0));
@@ -938,6 +969,10 @@ fn breakpoint() {
     loop {
         x86_64::instructions::hlt();
     }
+}
+
+pub fn get_kernel_cr3() -> u64 {
+    X86_PAGER.get().unwrap().get_kernel_cr3()
 }
 
 #[cfg(test)]
@@ -1070,6 +1105,7 @@ mod tests {
                             stack_4kb_memory_addr_top
                         )
                     ),
+                    kernel_cr3: 0,
                     fb_logger: Mutex::new(
                         FrameBufferLogger::new(0x0 as Address, 800, 600, 3200).disable()
                     ),
