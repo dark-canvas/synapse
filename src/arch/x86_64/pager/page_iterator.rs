@@ -174,9 +174,10 @@ mod tests {
 
     #[test]
     fn test_page_iterator() {
-        // create a mmap with various edge cases
-        let mmap_page = [0u8; 4096];
-        let mmap_page_addr = mmap_page.as_ptr() as Address;
+        // create a mmap with various edge cases (page pointer needs to be 4096 byte aligned 
+        // else the code will assert)
+        let mmap_page = [0u8; 4096*2];
+        let mmap_page_addr = ((mmap_page.as_ptr() as Address) + 4096) & (!0xFFF);
         let mut mmap = MemoryMap::new_from_page(mmap_page_addr).unwrap();
 
         let mut base: Address = 0;
