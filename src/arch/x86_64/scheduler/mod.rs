@@ -10,16 +10,19 @@ use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
 use crate::get_register_snapshot;
 use crate::restore_register_snapshot;
 
+// TODO:
+//use crate::scheduler::Scheduler as SchedulerInterface;
+
 use core::arch::global_asm;
 
 unsafe extern "C" {
-    // I've seen other examples of this function marked as never returning, which isn't correct.
-    // While this function *may not* immediately return to the caller, it saves off the caller's context, 
-    // which will eventually be returned to when the task is reactivated.
-    // The problem with marking the function as never returning is that rust can (and will) remove any 
-    // code that it thinks is unreachable after this function is called, which is not the case.
+    /// Voluntarily called by a task to yield control to the scheduler, which will select the next task to run.
     pub fn yield_task_asm();
+
+    // TODO: allow passing in the interupt stack frame for modification?
+    // Or create an entirely different function for that?
 }
+
 // Inline assembly function directly into the binary
 // It's important to note the convention that's used when calling this method:
 //   The call instruction: It decrements the Stack Pointer (RSP) by 8 bytes, 

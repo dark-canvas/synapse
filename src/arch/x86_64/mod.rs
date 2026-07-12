@@ -33,8 +33,13 @@ pub fn init(config: &Config) {
 
     // TODO: don't do this yet, as the timer interrupt will modify the contents of the 
     // CURRENT_TASK glboal as well, which will mess up our yield_task() testing
-    //interrupts::enable();
-    interrupts::disable();
+    interrupts::enable();
+    //interrupts::disable();
+
+    // start a new task for each of the tests?
+    // allocate a couple pages for the stack
+    // create a task struction
+    // add it to the scheduler
 
     pager::run_time_tests(X86_PAGER.get().unwrap());
 }

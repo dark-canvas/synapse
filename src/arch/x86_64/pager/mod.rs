@@ -44,6 +44,7 @@ pub mod address_aggregator;
 
 use spin::Mutex;
 use core::fmt::Write;
+use core::ops::Add;
 
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::Size4KiB;
@@ -112,10 +113,27 @@ const PAGE_AGGREGATOR_2MB_BASE: Address = 0xFFFFFFD040000000;
 const PAGE_AGGREGATOR_1GB_BASE: Address = 0xFFFFFFE000200000;
 const PAGE_AGGREGATOR_512GB_BASE: Address = 0xFFFFFFE000202000;
 
+// TODO: move these into the common pager space (not x86_64 specific)
 #[derive(Copy, Clone, Debug)]
 pub struct PhysicalAddress(pub Address);
 #[derive(Copy, Clone, Debug)]
 pub struct VirtualAddress(pub Address);
+
+impl Add<usize> for VirtualAddress {
+    type Output = VirtualAddress;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        VirtualAddress(self.0 + rhs as Address)
+    }
+}
+
+impl Add<usize> for PhysicalAddress {
+    type Output = PhysicalAddress;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        PhysicalAddress(self.0 + rhs as Address)
+    }
+}
 
 #[derive(PartialEq, Copy, Clone)]
 pub enum PageType {

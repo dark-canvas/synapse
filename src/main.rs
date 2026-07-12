@@ -52,6 +52,12 @@ pub extern "C" fn _start() -> ! {
     println!("Starting Synapse...");
 
     let config = Config::from_page(config_addr);
+
+    if config.get_version() != Config::get_supported_version() {
+        panic!("Found config version {}, expected version {}",
+            config.get_version(), Config::get_supported_version())
+    }
+
     let module_list = ModuleList::from_page(config.get_module_list_address());
 
     println!("Module list:");

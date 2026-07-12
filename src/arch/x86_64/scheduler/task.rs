@@ -27,15 +27,15 @@ pub struct Task {
 pub type TaskList = PageBasedList<Task>;
 
 impl Task {
-    pub fn new_kernel_task(entry: Address) -> Self {
+    pub fn new_kernel_task(entry: Address, stack: VirtualAddress, stack_size: usize) -> Self {
         // REVISIT: this wouldn't have to be mut with rip and rflags were separate from registers..?
         let mut result = Task { 
             id: 0, 
             registers: RegisterSnapshot::default(),
-            rip: entry,
+            rip: entry, // TODO: need to wrap this in a handler that calls entry and cleans up upon return
             rflags: 0x202, // Interrupt Enable flag
             cr3: X86_PAGER.get().unwrap().get_kernel_cr3(),
-            kernel_stack_pointer: VirtualAddress(0) //X86_PAGER.get().unwrap().allocate_stack(0x1000).unwrap() // Arbitrary stack size for now
+            kernel_stack_pointer: stack + stack_size, //X86_PAGER.get().unwrap().allocate_stack(0x1000).unwrap() // Arbitrary stack size for now
         };
         //result.registers.rip = entry;
         //result.registers.rflags = 0x202; // Interrupt Enable flag
