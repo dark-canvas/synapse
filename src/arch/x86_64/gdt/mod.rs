@@ -5,7 +5,7 @@ use x86_64::structures::tss::TaskStateSegment;
 use x86_64::instructions::tables::load_tss;
 use x86_64::instructions::segmentation::{CS, DS, ES, FS, GS, SS, Segment};
 use x86_64::structures::gdt::{GlobalDescriptorTable, Descriptor, SegmentSelector};
-use lazy_static::lazy_static;
+use spin::Lazy;
 
 // See https://www.kernel.org/doc/Documentation/x86/kernel-stacks for a description of 
 // some uses of independent stacks
@@ -27,25 +27,23 @@ static mut NMI_STACK: [u8; NMI_STACK_SIZE] = [0; NMI_STACK_SIZE];
 static mut DEBUG_STACK: [u8; DEBUG_STACK_SIZE] = [0; DEBUG_STACK_SIZE];
 static mut MCE_STACK: [u8; MCE_STACK_SIZE] = [0; MCE_STACK_SIZE];
 
-lazy_static! {
-    static ref TSS: TaskStateSegment = {
-        let mut tss = TaskStateSegment::new();
-        tss.interrupt_stack_table[DOUBLE_FAULT_STACK_INDEX as usize] = 
-            VirtAddr::from_ptr(unsafe { &raw const DOUBLE_FAULT_STACK }) +
-            DOUBLE_FAULT_STACK_SIZE as u64;
-        tss.interrupt_stack_table[NMI_STACK_INDEX as usize] = 
-            VirtAddr::from_ptr(unsafe { &raw const NMI_STACK }) +
-            NMI_STACK_SIZE as u64;
-        tss.interrupt_stack_table[DEBUG_STACK_INDEX as usize] = 
-            VirtAddr::from_ptr(unsafe { &raw const DEBUG_STACK }) +
-            DEBUG_STACK_SIZE as u64;
-        tss.interrupt_stack_table[MCE_STACK_INDEX as usize] = 
-            VirtAddr::from_ptr(unsafe { &raw const MCE_STACK }) +
-            MCE_STACK_SIZE as u64;
+static TSS: Lazy<TaskStateSegment> = Lazy::new(|| {
+    let mut tss = TaskStateSegment::new();
+    tss.interrupt_stack_table[DOUBLE_FAULT_STACK_INDEX as usize] = 
+        VirtAddr::from_ptr(unsafe { &raw const DOUBLE_FAULT_STACK }) +
+        DOUBLE_FAULT_STACK_SIZE as u64;
+    tss.interrupt_stack_table[NMI_STACK_INDEX as usize] = 
+        VirtAddr::from_ptr(unsafe { &raw const NMI_STACK }) +
+        NMI_STACK_SIZE as u64;
+    tss.interrupt_stack_table[DEBUG_STACK_INDEX as usize] = 
+        VirtAddr::from_ptr(unsafe { &raw const DEBUG_STACK }) +
+        DEBUG_STACK_SIZE as u64;
+    tss.interrupt_stack_table[MCE_STACK_INDEX as usize] = 
+        VirtAddr::from_ptr(unsafe { &raw const MCE_STACK }) +
+        MCE_STACK_SIZE as u64;
 
-        tss
-    };
-}
+    tss
+});
 
 
 struct RingSelectors {
@@ -59,33 +57,28 @@ struct Selectors {
     tss_selector: SegmentSelector,
 }
 
-lazy_static! {
-    static ref GDT: (GlobalDescriptorTable, Selectors) = {
-        // TODO: do I care about order?
-        let mut gdt = GlobalDescriptorTable::new();
-        let mut selectors = Selectors {
-            ring0: RingSelectors {
-                code_selector: gdt.append(Descriptor::kernel_code_segment()),
-                data_selector: gdt.append(Descriptor::kernel_data_segment()),
-            },
-            ring3: RingSelectors {
-                code_selector: gdt.append(Descriptor::user_code_segment()),
-                data_selector: gdt.append(Descriptor::user_data_segment()),
-            },
-            tss_selector: gdt.append(Descriptor::tss_segment(&TSS)),
-        };
-        (gdt, selectors)
+static GDT: Lazy<(GlobalDescriptorTable, Selectors)> = Lazy::new(|| {
+    // TODO: do I care about order?
+    let mut gdt = GlobalDescriptorTable::new();
+    let selectors = Selectors {
+        ring0: RingSelectors {
+            code_selector: gdt.append(Descriptor::kernel_code_segment()),
+            data_selector: gdt.append(Descriptor::kernel_data_segment()),
+        },
+        ring3: RingSelectors {
+            code_selector: gdt.append(Descriptor::user_code_segment()),
+            data_selector: gdt.append(Descriptor::user_data_segment()),
+        },
+        tss_selector: gdt.append(Descriptor::tss_segment(&*TSS)),
     };
-}
+    (gdt, selectors)
+});
 
 pub fn init() {
-    // Move this into the lazy_static, and just "touch" GDT here in order 
-    // to ensure it's initialized here?
-    // Although other parts of the code may want to know what selectors were 
-    // created
-    GDT.0.load();
+    let gdt = &*GDT;
+    gdt.0.load();
     unsafe {
-        CS::set_reg(GDT.1.ring0.code_selector);
+        CS::set_reg(gdt.1.ring0.code_selector);
         // Eother of these cause a GPF later on for some reason...
         // or maybe not?  Sometimes I buid and run and I get a GPF, other times it works... 
         // I don't understand...

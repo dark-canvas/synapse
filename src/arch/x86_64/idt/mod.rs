@@ -1,6 +1,6 @@
 pub mod handlers;
 
-use lazy_static::lazy_static;
+use spin::Lazy;
 use x86_64::structures::idt::InterruptDescriptorTable;
 
 use super::gdt;
@@ -68,8 +68,7 @@ pub enum InterruptIndex {
     Spurious = 34,
 }
 
-lazy_static! {
-    static ref IDT: InterruptDescriptorTable = {
+static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
         let mut idt = InterruptDescriptorTable::new();
         idt.divide_error.set_handler_fn(default_handler_x86::<DivideByZeroMetaData>);
         unsafe {
@@ -107,8 +106,7 @@ lazy_static! {
         idt.security_exception.set_handler_fn(default_handler_with_error_code_x86::<SecurityExceptionMetaData>);
         idt[InterruptIndex::Timer as u8].set_handler_fn(timer_interrupt_handler);
         idt
-    };
-}
+});
 
 pub fn init_idt() {
     IDT.load();

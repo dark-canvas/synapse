@@ -44,6 +44,7 @@ pub mod address_aggregator;
 
 use spin::Mutex;
 use core::fmt::Write;
+use core::ops::Add;
 
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::Size4KiB;
@@ -57,9 +58,13 @@ use satus_struct::config::Config;
 use satus_struct::module_list::ModuleList;
 use satus_struct::memory_map::{MemoryMap, MemoryRegionType};
 
+use crate::errors::ErrCode;
+use crate::pager::PagerError;
+
 use crate::KERNEL_START;
 use crate::KERNEL_STACK_SIZE;
 
+use crate::pager::Pager as PagerInterface;
 use crate::types::Address;
 use crate::stack::SimpleStack;
 use crate::logger::FrameBufferLogger;
@@ -77,6 +82,8 @@ use crate::logger::LOG_AGGREGATE_1GB;
 use self::page_stack::{PageStack, PageMapper};
 use self::page_iterator::PageIterator;
 
+use super::X86_PAGER;
+use super::scheduler::yield_task;
 
 pub const PAGER_MAX_SUPPORTED_MEMORY: usize = 512*1024*1024*1024; // 512GB
 
@@ -106,10 +113,27 @@ const PAGE_AGGREGATOR_2MB_BASE: Address = 0xFFFFFFD040000000;
 const PAGE_AGGREGATOR_1GB_BASE: Address = 0xFFFFFFE000200000;
 const PAGE_AGGREGATOR_512GB_BASE: Address = 0xFFFFFFE000202000;
 
-#[derive(Copy, Clone)]
-pub struct PhysicalAddress(Address);
-#[derive(Copy, Clone)]
-pub struct VirtualAddress(Address);
+// TODO: move these into the common pager space (not x86_64 specific)
+#[derive(Copy, Clone, Debug)]
+pub struct PhysicalAddress(pub Address);
+#[derive(Copy, Clone, Debug)]
+pub struct VirtualAddress(pub Address);
+
+impl Add<usize> for VirtualAddress {
+    type Output = VirtualAddress;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        VirtualAddress(self.0 + rhs as Address)
+    }
+}
+
+impl Add<usize> for PhysicalAddress {
+    type Output = PhysicalAddress;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        PhysicalAddress(self.0 + rhs as Address)
+    }
+}
 
 #[derive(PartialEq, Copy, Clone)]
 pub enum PageType {
@@ -129,6 +153,7 @@ pub struct Pager {
     stack_1gb: Mutex< (PageStack::<PAGE_SIZE_1GB>, Address) >,
     stack_2mb: Mutex< (PageStack::<PAGE_SIZE_2MB>, Address) >,
     stack_4kb: Mutex< (PageStack::<PAGE_SIZE_4KB>, Address) >,
+    kernel_cr3: u64,
     fb_logger: Mutex< FrameBufferLogger >,
 }
 
@@ -399,6 +424,9 @@ impl Pager {
                     kernel_physical_start,
                     four_kb_page_allocator.get_current().unwrap_or(required_base));
 
+        let (addr, flags) = Cr3::read_raw();
+        let cr3_value = addr.start_address().as_u64() | flags as u64;
+
         unsafe {
             let pl4_table = &mut *(pl4_frame.start_address().as_u64() as *mut PageTable);
             
@@ -429,9 +457,14 @@ impl Pager {
                         top_of_4kb_stack
                     )
                 ),
+                kernel_cr3: cr3_value,
                 fb_logger: Mutex::new(fb_logger),
             }
         }
+    }
+
+    pub fn get_kernel_cr3(&self) -> u64 {
+        self.kernel_cr3
     }
 
     // TODO: need to determine how to properly account for borrowed pages?
@@ -624,11 +657,11 @@ impl Pager {
         }
     }
 
-    pub fn virtual_to_physical(&self, virtual_addr: usize) -> Option<usize> {
-        let pl4_index = (virtual_addr >> 39) & 0o777;
-        let pl3_index = (virtual_addr >> 30) & 0o777;
-        let pl2_index = (virtual_addr >> 21) & 0o777;
-        let pl1_index = (virtual_addr >> 12) & 0o777;
+    pub fn virtual_to_physical(&self, virtual_addr: VirtualAddress) -> Option<PhysicalAddress> {
+        let pl4_index = (virtual_addr.0 as usize >> 39) & 0o777;
+        let pl3_index = (virtual_addr.0 as usize >> 30) & 0o777;
+        let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
+        let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
 
         unsafe {
             let pl4_table = get_pl4_table();
@@ -646,7 +679,7 @@ impl Pager {
             }
 
             if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
-                return Some(pl3_entry.addr().as_u64() as usize + (virtual_addr & 0x3FFFFFFF));
+                return Some(PhysicalAddress(pl3_entry.addr().as_u64() + (virtual_addr.0 & 0x3FFFFFFF)));
             }
 
             // this could be a 2mb page...
@@ -657,7 +690,7 @@ impl Pager {
             }
 
             if pl2_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
-                return Some(pl2_entry.addr().as_u64() as usize + (virtual_addr & 0x1FFFFF));
+                return Some(PhysicalAddress(pl2_entry.addr().as_u64() + (virtual_addr.0 & 0x1FFFFF)));
             }
 
             let pl1_table = entry_to_table(&pl2_entry);
@@ -666,7 +699,7 @@ impl Pager {
                 return None;
             }
 
-            Some(pl1_entry.addr().as_u64() as usize + (virtual_addr & 0xFFF))
+            Some(PhysicalAddress(pl1_entry.addr().as_u64() + (virtual_addr.0 & 0xFFF)))
         }
     }
 
@@ -867,6 +900,8 @@ pub fn run_time_tests(pager: &Pager) {
             }
         }
         last_page = page;
+
+        yield_task();
     }
 
     println!("Allocated all pages; now freeing starting at {}", first_page.unwrap_or(0));
@@ -905,11 +940,39 @@ pub fn run_time_tests(pager: &Pager) {
     }
 }
 
+impl PagerInterface for Pager {
+    fn get_page_size(&self) -> usize {
+        4096
+    }
+    fn allocate_physical(&self) -> Result<PhysicalAddress, ErrCode> { 
+        self.allocate_4kb_page().map(PhysicalAddress).ok_or(ErrCode::OutOfMemory)
+    }
+    fn free_physical(&self, addr: PhysicalAddress) -> Result<(), ErrCode> { 
+        self.free_4kb_page(addr.0);
+        Ok(())
+    }
+    fn allocate_virtual(&self, num: usize, to_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode> { Err(ErrCode::Unimplemented) }
+    fn free_virtual(&self, num: usize, base_addr: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn map_physical_to_virtual(&self, phys: PhysicalAddress, virt: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn get_virtual_address(&self, addr: PhysicalAddress) -> Result<VirtualAddress, ErrCode> { 
+        Ok(VirtualAddress(addr.0 + PHYSICAL_OFFSET))
+    }
+    fn get_physical_address(&self, addr: VirtualAddress) -> Result<PhysicalAddress, ErrCode> {
+        self.virtual_to_physical(addr).ok_or(
+            ErrCode::Pager(PagerError::UnmappedVirtualAddress(addr))
+        )
+    }
+}
+
 fn breakpoint() {
     println!("Artificial breakpoint");
     loop {
         x86_64::instructions::hlt();
     }
+}
+
+pub fn get_kernel_cr3() -> u64 {
+    X86_PAGER.get().unwrap().get_kernel_cr3()
 }
 
 #[cfg(test)]
@@ -1042,6 +1105,7 @@ mod tests {
                             stack_4kb_memory_addr_top
                         )
                     ),
+                    kernel_cr3: 0,
                     fb_logger: Mutex::new(
                         FrameBufferLogger::new(0x0 as Address, 800, 600, 3200).disable()
                     ),
