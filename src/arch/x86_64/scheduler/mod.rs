@@ -148,6 +148,15 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
+    pub fn init() {
+        // create a new scheduler per each CPU
+        // set config.cpu_config.kernel_ap_entry to something that executes the scheduler
+        // set config.cpu_config.ap_ready to true to unblock them
+
+        // or does the above belong in a cpu init section?  Because there's more than just scheduling...
+        // they also need to init the x2apic per each cpu
+    }
+
     pub fn new() -> Self {
         let mut scheduler = Scheduler {
             tasks: TaskList::new().expect("Failed to create task list"),

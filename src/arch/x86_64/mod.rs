@@ -3,6 +3,7 @@ pub mod idt;
 pub mod pager;
 pub mod pit;
 pub mod scheduler;
+pub mod smp;
 #[macro_use]
 pub mod util;
 pub mod x2apic;
@@ -24,12 +25,14 @@ pub fn init(config: &Config) {
     idt::init_idt();
     x2apic::init();
     pit::init();
+    smp::init(&mut config.get_cpu_config());
 
     println!("Creating pager...");
     X86_PAGER.call_once(|| { Pager::new(&config) });
     *PAGER.borrow_mut() = X86_PAGER.get().unwrap();
 
     Scheduler::new();
+    // todo: scheduler::init() instead
 
     // TODO: don't do this yet, as the timer interrupt will modify the contents of the 
     // CURRENT_TASK glboal as well, which will mess up our yield_task() testing
