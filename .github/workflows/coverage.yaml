@@ -1,9 +1,6 @@
 name: Code coverage
 
 on:
-  workflow_run:
-    workflows: ["Build the kernel"]
-    types: [completed]
   pull_request:
     # Triggers on PR creation, new commits, and reopenings
     types: [opened, synchronize, reopened] 
