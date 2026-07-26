@@ -55,3 +55,57 @@ Executing the tests can then be done using the provided Makefile:
 ```
 make test
 ```
+
+# Debugging
+
+If the kernel is run under qemu, it can be utilize qemu's remote gdb server 
+in order to step through code.
+
+In order to facilitate this, I have the following in my `~/.gdbinit`:
+
+```
+define connect-qemu
+  target remote localhost:1234
+end
+
+define load-kernel
+  add-symbol-file /home/jweeks/code/synapse/target/target.x86_64/debug/kernel
+end
+
+set print pretty on
+set disassemble-next-line on
+# if SMP is enabled in the kernel, software breakpoints don't seem to work
+alias break = hbreak
+```
+
+And then to start your debug session, use the `make debug` command, which 
+will start qemu up and wait for something to connect to it's remote gdb 
+server.
+
+In other terminal you can do this via:
+
+```
+gdb
+(gdb) connect-qemu
+(gdb) continue
+```
+
+Which will then start the bootloader running.  The bootloader intentional 
+stops before loading the kernel and waits for the `esc` key to be pressed.
+This is intended to be the developers opportunity to `ctrl-c` in gdb (to 
+break into the gdb interactive shell) and set breakpoints before the kernel 
+starts.
+
+An example of this can be seen below:
+
+```
+^C
+Thread 4 received signal SIGINT, Interrupt.
+[Switching to Thread 1.4]
+0x000000007f10d0d1 in ?? ()
+(gdb) load-kernel 
+add symbol table from file "/home/jweeks/code/synapse/target/target.x86_64/debug/kernel"
+(gdb) b kernel::arch::init 
+Breakpoint 1 at 0xffffff800000300e: file src/logger.rs, line 120.
+(gdb) continue
+```
