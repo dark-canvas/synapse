@@ -1,0 +1,41 @@
+name: Code coverage
+
+on:
+  pull_request:
+    # Triggers on PR creation, new commits, and reopenings
+    types: [opened, synchronize, reopened] 
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+
+      - name: Install core sources (kernel needs to rebuild this for target arch)
+        run: rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+
+      - name: Install coverage tooling
+        run: |
+          rustup component add llvm-tools-preview --toolchain nightly-x86_64-unknown-linux-gnu
+          cargo +nightly install cargo-llvm-cov --version 0.8.7 --locked
+
+      - name: Generate HTML code coverage report
+        run: |
+          mkdir -p target/coverage/html
+          CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --html --output-dir target/coverage/html
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: target/coverage/html

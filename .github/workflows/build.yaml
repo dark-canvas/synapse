@@ -16,7 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
-        # Use the dtolnay/rust-toolchain action for easy setup
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
