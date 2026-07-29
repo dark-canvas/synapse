@@ -1,80 +1,80 @@
 .code16
-.intel_syntax noprefix
+
 .section .text
 .globl trampoline_start
 .globl trampoline_end
 
 trampoline_start:
     cli                         # Disable interrupts
-    xor ax, ax
-    mov ds, ax                  # Set up clean segment registers
-    mov es, ax
-    mov ss, ax
+    xorw %ax, %ax
+    movw %ax, %ds               # Set up clean segment registers
+    movw %ax, %es
+    movw %ax, %ss
 
     # 1. Load temporary 32-bit GDT (must use physical pointer addresses)
     # In real mode, lgdt needs an absolute 32-bit linear address
-    lgdt [entry_gdt_pointer]
+    lgdt entry_gdt_pointer
 
     # 2. Enable protected mode
-    mov eax, cr0
-    or eax, 1
-    mov cr0, eax
+    movl %cr0, %eax
+    orl $1, %eax
+    movl %eax, %cr0
 
     # 3. Far jump to 32-bit protected mode code segment (0x08)
     # This flushes the prefetch queue
-    jmp 0x08:protected_mode_entry
+    ljmp $0x08, protected_mode_entry
 
 .code32
 protected_mode_entry:
-    mov ax, 0x10                # Load 32-bit data segment
-    mov ds, ax
-    mov es, ax
-    mov ss, ax
+    movw $0x10, %ax            # Load 32-bit data segment
+    movw %ax, %ds
+    movw %ax, %es
+    movw %ax, %ss
 
     # 4. Enable PAE (Physical Address Extension) - Required for Long Mode
-    mov eax, cr4
-    or eax, 32                  # Set PAE bit (1 << 5)
-    mov cr4, eax
+    movl %cr4, %eax
+    orl $32, %eax              # Set PAE bit (1 << 5)
+    movl %eax, %cr4
 
     # 5. Load your existing 64-bit CR3 Page Table Pointer
     # NOTE: You must write your active CR3 address to 'ap_cr3_target' from Rust
-    mov eax, [ap_cr3_target]
-    mov cr3, eax
+    movl ap_cr3_target, %eax
+    movl %eax, %cr3
 
     # 6. Enable Long Mode in EFER MSR
-    mov ecx, 0xC0000080         # EFER MSR
+    movl $0xC0000080, %ecx    # EFER MSR
     rdmsr
-    or eax, 256                 # Set LME (Long Mode Enable) bit (1 << 8)
+    orl $256, %eax            # Set LME (Long Mode Enable) bit (1 << 8)
     wrmsr
 
     # 7. Enable Paging to turn on Long Mode completely
-    mov eax, cr0
-    or eax, 0x80000000          # Set PG bit (1 << 31)
-    mov cr0, eax
+    movl %cr0, %eax
+    orl $0x80000000, %eax     # Set PG bit (1 << 31)
+    movl %eax, %cr0
 
     # 8. Far jump into 64-bit mode (using your kernel's 64-bit Code Segment, e.g., 0x08 or 0x10)
     # NOTE: Replace 0x08 with your kernel's 64-bit code segment selector index
-    jmp 0x08:long_mode_entry
+    ljmp $0x08, long_mode_entry
 
 .code64
 long_mode_entry:
     # 9. We are officially in 64-bit Long Mode!
     # Load your final 64-bit kernel data segment registers
-    mov ax, 0x10                # Replace with your 64-bit data segment selector
-    mov ds, ax
-    mov es, ax
-    mov ss, ax
-    mov fs, ax
-    mov gs, ax
+    movw $0x10, %ax           # Replace with your 64-bit data segment selector
+    movw %ax, %ds
+    movw %ax, %es
+    movw %ax, %ss
+    movw %ax, %fs
+    movw %ax, %gs
 
     # 10. Fetch unique stack pointer assigned by the BSP for this specific CPU core
-    # Use an intermediate register to load a 64-bit value from memory
-    mov rax, [ap_stack_target]
-    mov rsp, rax
+    # Use RIP-relative 64-bit load to get the address
+    movq ap_stack_target(%rip), %rax
+    movq %rax, %rsp
     
     # 11. Call our Rust entrypoint
-    mov rax, [ap_rust_entrypoint]
-    call rax
+    movq ap_rust_entrypoint(%rip), %rax
+    call *%rax
 
 .halt_loop:
     hlt
