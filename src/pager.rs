@@ -31,6 +31,9 @@ pub trait Pager: Sync {
 
     // TODO: Address -> Physical/VirtualAddress
     fn allocate_physical(&self) -> Result<PhysicalAddress, ErrCode>;
+    // Or just use the UEFI crate?
+    //fn allocate_physical_if<F>(&self, page_cond: F) -> Result<PhysicalAddress, ErrCode>
+    //  where F: Fn(PhysicalAddress) -> bool;
     fn free_physical(&self, addr: PhysicalAddress)-> Result<(), ErrCode>;
 
     // WHich?

@@ -69,8 +69,9 @@ long_mode_entry:
 
     # 10. Fetch unique stack pointer assigned by the BSP for this specific CPU core
     # Use RIP-relative 64-bit load to get the address
-    movq ap_stack_target(%rip), %rax
-    movq %rax, %rsp
+    #movq ap_stack_target(%rip), %rax
+    #movq %rax, %rsp
+    movq 0x1122334455667788, $rsp
     
     # 11. Call our Rust entrypoint
     movq ap_rust_entrypoint(%rip), %rax
