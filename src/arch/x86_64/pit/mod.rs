@@ -11,6 +11,7 @@ At the kernel level, you program the PIT (Programmable Interval Timer) or APIC t
 */
 
 use core::arch::asm;
+use core::time::Duration;
 use x86_64::VirtAddr;
 use x86_64::structures::idt::InterruptStackFrame;
 use x86_64::registers::model_specific::Msr;
@@ -49,10 +50,17 @@ const TIMER_BCD: u8 = 1;
 
 const PIT_FREQ: u32 = 0x1234DD;
 
+const MICROS_PER_SECOND: u64 = 1_000_000;
+
+static mut TICKS: u64 = 0;
+static mut FREQ: u64 = 0;
+
 // It's debateable whether this belongs here, or in the IDT module...  ultimately it'll defer to common multitasking code...
 pub extern "x86-interrupt" fn timer_interrupt_handler(
     stack_frame: InterruptStackFrame)
 {
+    // increment ticks by 1
+    unsafe { TICKS += 1; }
     // Safe off the current task's state so that we can resume it later
     /*
     unsafe {
@@ -108,6 +116,29 @@ fn timer_set_frequency(freq: u32) {
         x86_64::instructions::port::Port::new(TIMER_CTRL).write(TIMER0 | TIMER_WHOLE | TIMER_MODE2 | TIMER_BIN16);
         x86_64::instructions::port::Port::new(TIMER0_CNTR).write((divisor & 0xFF) as u8); // LSB
         x86_64::instructions::port::Port::new(TIMER0_CNTR).write((divisor >> 8) as u8); // MSB
+        FREQ = freq as u64;
+    }
+}
+
+pub fn timer_get_ticks() -> u64 {
+    unsafe { core::ptr::read_volatile(&raw const TICKS as *const u64) }
+}
+
+pub fn timer_delay(duration: Duration) {
+    let start_ticks = timer_get_ticks();
+
+    let freq = unsafe { 
+        FREQ as u64
+    };
+
+    let ticks_duration = duration.as_micros() * freq as u128/ MICROS_PER_SECOND as u128;
+    // could potentially do micros
+    let end_ticks = start_ticks + ticks_duration as u64;
+    println!("Ticks at {} waiting for {}", start_ticks, end_ticks);
+    while timer_get_ticks() < end_ticks {
+        // busy wait
+        // TODO: context switch
+        core::hint::spin_loop();
     }
 }
 

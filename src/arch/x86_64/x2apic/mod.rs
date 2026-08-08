@@ -24,4 +24,37 @@ pub fn init() {
     unsafe {
         lapic.enable();
     }
+
+    // start-up all CPUs:
+    /*
+    // Configure the ICR for an INIT IPI targeting a specific x2APIC ID
+    unsafe {
+        lapic.send_ipi(
+            target_lapic_id,
+            x2apic::lapic::IpiDeliveryMode::Init,
+            x2apic::lapic::IpiDestinationShorthand::NoShorthand,
+            0, // Vector is 0 for INIT
+        );
+    }
+    */
+
+    // Wait approximately 10 milliseconds for the core to process the reset.
+
+    /*
+    // The vector determines the entry address: Address = Vector * 0x1000
+    // For example, Vector 0x08 tells the AP to boot at address 0x8000
+    let boot_vector = 0x08; 
+
+    unsafe {
+        lapic.send_ipi(
+            target_lapic_id,
+            x2apic::lapic::IpiDeliveryMode::StartUp,
+            x2apic::lapic::IpiDestinationShorthand::NoShorthand,
+            boot_vector,
+        );
+    }
+    */
+
+    // Wait 200 microseconds. If the core has not updated a pre-defined shared 
+    // memory flag to signify it is awake, send a second identical SIPI.
 }
