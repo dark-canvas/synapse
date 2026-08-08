@@ -38,10 +38,6 @@ global_asm!(
     ".globl long_mode_entry_patch",
  
     "trampoline_start:",
-    //"    hlt",
-    // jump -3
-    //".byte 0xeb",
-    //".byte 0xfd",
     "    cli",
     "    xorw %ax, %ax",
     "    movw %ax, %es",
@@ -49,165 +45,101 @@ global_asm!(
     // ensure ds is set to the sipi vector cs
     "    movw %cs, %ax",
     "    movw %ax, %ds",
-    "    # 1. Load temporary 32-bit GDT (must use physical pointer addresses)",
-    "    # In real mode, lgdt needs an absolute 32-bit linear address",
-// Need to ensure this is relocated....
-    // TODO: confirm this patch... it seems wrong, and causes a fault
-    // if I loop before it, everything works
+
     "lgdt_patch:",
-    "    #lgdt gdt_pointer",
     "    lgdt (0x1122)", // placeholder for relocation
-    // jmp to start of vector (assumes 0x9f00)
-    //".byte 0xEA", 
-    //".byte 0x00", 
-    //".byte 0x00",
-    //".byte 0x00",
-    //".byte 0x9f",
 
-    // jmp to self... infinite loop
-    //".byte 0xeb",
-    //".byte 0xfe",
-
-    "    # 2. Enable protected mode",
+    // enable protected mode
     "    movl %cr0, %eax",
     "    orl $1, %eax",
     "    movl %eax, %cr0",
 
-    // jmp to self
-    //".byte 0xeb",
-    //".byte 0xfe",
-
-    "    # 3. Far jump to 32-bit protected mode code segment (0x08)",
-    "    # This flushes the prefetch queue",
-    "    #ljmpl $0x08, protected_mode_entry",
-    "    #ljmpl $0x08, 0x12345678",
-
-// patch up with absolute relocations
+    // far jump into pmode code (clear prefetch queue)
     "    .byte 0x66",                  // operand size prefix for 32-bit
     "    .byte 0xea",                  // JMP FAR opcode
     "protected_mode_entry_patch:",
     "    .long 0x11223344",            // 32-bit address
-    "    .word 0x0008",                // 16-bit selector
+    "    .word 0x0018",                // 16-bit selector
  
     ".code32",
     "protected_mode_entry:",
-    "    movw $0x10, %ax",
+    "    movw $0x20, %ax",
     "    movw %ax, %ds",
     "    movw %ax, %es",
     "    movw %ax, %ss",
 
-    "    # 4. Enable PAE (Physical Address Extension) - Required for Long Mode",
+    // enable PAE (physical address extension) and PSE (page size extenstions)
     "    movl %cr4, %eax",
-    //"    orl $32, %eax", // 0x20
     "    orl $0x30, %eax",            // Set BOTH PAE (0x20) and PSE (0x10)
     "    movl %eax, %cr4",
 
-    //".byte 0xeb",
-    //".byte 0xfe",
- 
-    "    # 5. Load your existing 64-bit CR3 Page Table Pointer",
-    "    # NOTE: You must write your active CR3 address to 'ap_cr3_target' from Rust",
- // another patch up (or use rip relative addressing to load it?)
- // TODO: is this correct?  This is loading a 32-bit value in CR3, and it's doing 
- // it in protected mode... 
-    "    #movl ap_cr3_address, %eax",
+    // load kernel's CR3 value (NOTE: it must be below 4GB since we're setting it in pmode)
     "cr3_patch:",
     "    movl $0x11223344, %eax", // placeholder for relocation
     "    movl %eax, %cr3",
 
- 
-    "    # 6. Enable Long Mode in EFER MSR",
+    // enable long mode (alone with NXE (not executable extension)
     "    movl $0xC0000080, %ecx",
     "    rdmsr",
-    //"    orl $256, %eax", // 0x100
     "    orl $0x900, %eax",           // Set BOTH LME (0x100) and NXE (0x800)
     "    wrmsr",    
 
-    // TODO: this doesn't work... enabling paging breaks the APs
-    "    # 7. Enable Paging to turn on Long Mode completely",
+    // enable paging (required for long mode)
     "    movl %cr0, %eax",
     "    orl $0x80000000, %eax",
     "    movl %eax, %cr0",
- 
-    "    # 8. Far jump into 64-bit mode (using your kernel's 64-bit Code Segment, e.g., 0x08 or 0x10)",
-    "    # NOTE: Replace 0x08 with your kernel's 64-bit code segment selector index",
-    "    #ljmpl $0x08, long_mode_entry",
-    "    #ljmpl $0x08, 0x11223344",
-// load absolutely value here
+
+    // far ump into long mode (clear prefetch queue)
     "    .byte 0xea",                  // JMP FAR opcode
     "long_mode_entry_patch:",
     "    .long 0x11223344",            // 32-bit offset
-    "    .word 0x0018",                // 16-bit selector
+    "    .word 0x0008",                // 16-bit selector
  
     ".code64",
     "long_mode_entry:",
-    "    # 9. We are officially in 64-bit Long Mode!",
-    "    # Load your final 64-bit kernel data segment registers",
-    "    movw $0x20, %ax",
+    "    movw $0x10, %ax",
     "    movw %ax, %ds", // delete?
     "    movw %ax, %es", // delete?
     "    movw %ax, %ss", // delete?
     "    movw %ax, %fs",
     "    movw %ax, %gs",
 
-    "    # 10. Fetch unique stack pointer assigned by the BSP for this specific CPU core",
-    "    # Use RIP-relative 64-bit load to get the address",
-// if this is rip relative, then it doesn't need a relocation?
-    "    #movq ap_stack_address(%rip), %rax",
-    "    #movq %rax, %rsp",
-
+    // nops to ensure stack_patch is aligned (for relocation)
     "nop",
     "nop",
     "nop",
     "nop",
     "nop",
-    //".byte 0xeb",
-    //".byte 0xfe",
     "stack_patch:",
     "    movq $0x1122334455667788, %rax", // placeholder for relocation
-    //".byte 0xeb",
-    //".byte 0xfe",
     "    movq %rax, %rsp",
 
- 
-    "    # 11. Call our Rust entrypoint",
-// trampoline.o shows a relocation here, but it codes it differently
-    "    #movq ap_entry_address(%rip), %rax",
+    // jump into the rust entry code
     "ap_entry_patch:",
     "    movq $0x1122334455667788, %rax", // placeholder for relocation
-    "    pushq %rax",
     "    call *%rax",
  
     ".halt_loop:",
     "    hlt",
     "    jmp .halt_loop",
  
-    "# --- Temporary Structures & Shared Variables Embedded in Trampoline ---",
+    // no need to define this as .text... it's just a single contiguous block 
+    // copied into the SIPI vector location
+    // TODO/REVISIT: Have the APs load the exact same gdt as the BSP?
     ".balign 4",
-    "#.section .data", // still .trampoline
     "gdt_start:",
     "    .quad 0x0000000000000000",
-    "    .quad 0x00cf9a000000ffff", // pmode code segment 0x08
-    "    .quad 0x00cf92000000ffff", // pmode data segment 0x10
-    "    .quad 0x00af9a000000ffff", // lmode code segment 0x18
-    "    .quad 0x00af92000000ffff", // lmode data segment 0x20
+    "    .quad 0x00af9a000000ffff", // lmode code segment 0x08 (matches BSP selector)
+    "    .quad 0x00af92000000ffff", // lmode data segment 0x10 (matches BSP selector)
+    "    .quad 0x00cf9a000000ffff", // pmode code segment 0x18
+    "    .quad 0x00cf92000000ffff", // pmode data segment 0x20
     "gdt_end:",
  
     "gdt_pointer:",
     "    .word gdt_end - gdt_start - 1",
     "gdt_pointer_patch:",
     "    .long 0",
- 
-//    "# Communication channels. Rust writes to these before sending SIPI.",
-//    ".balign 8",
-//    ".globl ap_cr3_address",
-//    ".globl ap_stack_address",
-//    ".globl ap_entry_address",
- 
- //   "ap_cr3_address:    .long 0",
- //   "ap_stack_address:  .quad 0",
- //   "ap_entry_address:  .quad 0",
- 
+
     "trampoline_end:",
     options(att_syntax)
 );
