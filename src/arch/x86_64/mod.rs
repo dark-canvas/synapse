@@ -25,7 +25,6 @@ pub fn init(config: &Config) {
     idt::init_idt();
     x2apic::init();
     pit::init();
-    smp::init(&mut config.get_cpu_config());
 
     println!("Creating pager...");
     X86_PAGER.call_once(|| { Pager::new(&config) });
@@ -38,6 +37,11 @@ pub fn init(config: &Config) {
     // CURRENT_TASK glboal as well, which will mess up our yield_task() testing
     interrupts::enable();
     //interrupts::disable();
+
+    // SMP requires pager to be initialized first
+    // SMP also requires the timer interrupt setup (for delays)
+    smp::init(&mut config.get_cpu_config());
+
 
     // start a new task for each of the tests?
     // allocate a couple pages for the stack
