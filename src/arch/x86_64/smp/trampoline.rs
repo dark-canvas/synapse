@@ -123,7 +123,7 @@ global_asm!(
     "    hlt",
     "    jmp .halt_loop",
  
-    // no need to define this as .text... it's just a single contiguous block 
+    // no need to define this as .data... it's just a single contiguous block 
     // copied into the SIPI vector location
     // TODO/REVISIT: Have the APs load the exact same gdt as the BSP?
     ".balign 4",
@@ -145,8 +145,6 @@ global_asm!(
 );
 
 unsafe extern "C" {
-    // NOTE: some of these probably need to be a u128, as they hold a 64-bit value and 
-    // an instruction
     static mut lgdt_patch: u64;
     static mut gdt_pointer_patch: u32;
     static mut cr3_patch: u64;
@@ -154,11 +152,13 @@ unsafe extern "C" {
     static mut ap_entry_patch: u128;
     static mut long_mode_entry_patch: u32;
     static mut protected_mode_entry_patch: u32;
+
+    static gdt_pointer: Address;
+    static gdt_start: Address;
+
     // bounds of the trampoline to copy
     static trampoline_start: Address;
     static trampoline_end: Address;
-    static gdt_pointer: Address;
-    static gdt_start: Address;
 }
 
 macro_rules! relocate_jump {
@@ -182,7 +182,7 @@ macro_rules! relocate_jump {
 // assign it a value only to immediately overwrite it.  The intention of this is to create a new 
 // variable of the same type as another.
 macro_rules! relocate {
-    ($reloc:ident, $mask:expr, $value:ident) => {
+    ($reloc:expr, $mask:expr, $value:ident) => {
         let mut reloc_copy = $reloc;
         let bit_shift = $mask.trailing_zeros();
         let num_bits_in_mask = $mask.count_ones();
@@ -288,10 +288,10 @@ impl Trampoline {
         let stack_patch_offset = Self::get_offset(unsafe { &raw const stack_patch as *const _ as Address }) as u64;
         let relocated_stack_patch = 
             self.address + PHYSICAL_OFFSET + stack_patch_offset;
-        let stack_patch_ptr = relocated_stack_patch as *mut u128;
         
         unsafe {
-            // movq $0x1122334455667788, %rax" == 0x48 (rex.w prefix), 0xb8, 64-bit address
+            let stack_patch_ptr = relocated_stack_patch as *mut u128;
+
             assert!(stack_patch & 0x0000000000ffffffffffffffffffff == 0x1122334455667788b848u128);
             let mut stack_patch_copy: u128 = *stack_patch_ptr & 0xffffffffffff0000000000000000ffff;
             println!("stack patch orig: {:#x}", stack_patch_orig);
@@ -299,6 +299,9 @@ impl Trampoline {
             stack_patch_copy |= (stack_pointer as u128) << 16;
             println!("stack patch done: {:#x}", stack_patch_copy);
             *stack_patch_ptr = stack_patch_copy;
+
+            // TODO: would be nice if this would work (asserts on sentinel... figure out why)
+            // relocate!((*stack_patch_ptr), 0xffffffffffffffff0000_u128, stack_pointer);
         }
     }
 }

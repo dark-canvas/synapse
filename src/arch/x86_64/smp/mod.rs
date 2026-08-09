@@ -11,7 +11,6 @@ use core::slice;
 use core::ptr::{read_volatile, write_volatile};
 use core::time::Duration;
 use super::pager::get_kernel_cr3;
-// TODO: should possibly use the pager's public physical_to_virtual API?
 use crate::Address;
 use crate::arch::x86_64::pager::PHYSICAL_OFFSET;
 use crate::arch::x86_64::pager::set_mmio;
@@ -31,6 +30,10 @@ pub fn kernel_ap_entry() {
     }
 }
 
+// REVISIT: a lot of this function (and others here) are very apic/x2apic related and, debateably, 
+// should to contained within an apic/x2apic module and exposed to, and used by, this module.
+// There's a lot of overlap between apic and smp which may deserve some refactoring once I get a 
+// better idea of where the separation should be.
 pub fn init(cpu_config: &mut CpuConfig) {
     println!("Bootloader reports {} CPUs", cpu_config.get_num_cpus());
 
@@ -53,7 +56,8 @@ pub fn init(cpu_config: &mut CpuConfig) {
     let mmio_result = set_mmio(VirtualAddress(lapic_physical_address + PHYSICAL_OFFSET));
     println!("MMIO result {}", mmio_result);
 
-    // TODO: need to enable apic?
+    // Not sure if we really need to do this, but... 
+    // Try to enable APIC and X2APIC here
     unsafe {
         core::arch::asm!(
             "mov $0x1B, %ecx",
@@ -63,28 +67,14 @@ pub fn init(cpu_config: &mut CpuConfig) {
             options(nostack, preserves_flags, att_syntax)
         );
     }
-    /*
-    mov $0x1B, %ecx
-    rdmsr
-    or $0x800, %eax     /* Set bit 11 (APIC Enable) */
-    wrmsr
-    */
 
-    // TODO: disable caching on this page
-    /**
-    #define PAGE_PWT  (1 << 3) // Write-Through
-    #define PAGE_PCD  (1 << 4) // Cache Disable
-
-    pte[index] = PHYSICAL_LAPIC_BASE | PAGE_PRESENT | PAGE_WRITE | PAGE_PCD | PAGE_PWT;
-    */
-
-    println!("kerenl cr3 {:x} raw cr3 {:x}", get_kernel_cr3(), get_cr3());
-
+    // Create our trampoline to take the APs from real mode to long mode
     let trampoline = Trampoline::new(
         cpu_config.trampoline_address, 
         get_cr3(), 
         kernel_ap_entry as Address);
     
+    // And identity map it (it must be within the 1st MB such that it's reachable in 16-bit real mode)
     X86_PAGER.get().unwrap().map_physical_to_virtual( 
         PhysicalAddress(cpu_config.trampoline_address),
         VirtualAddress(cpu_config.trampoline_address), 
@@ -119,7 +109,7 @@ pub fn init(cpu_config: &mut CpuConfig) {
                 local_apid_id = Some(lapic.apic_id as u32);
             }
 
-            // Type 1: I/O APIC (TODO: store to assigning interrupts to CPUs?)
+            // Type 1: I/O APIC (TODO: store this to allow assigning interrupts to CPUs?)
             MadtEntry::IoApic(io_apic) => {
                 // ...
             }
@@ -179,13 +169,25 @@ unsafe fn startup_ap(
     trampoline: &Trampoline, 
     per_cpu_config: &mut PerCpuConfig) {
 
-    // skip the first one because we're already running?
+    // Skip the first one because we're already running (BSP)
+    // Trying to start the CPU we're already running on can/will cause a fault. 
     if apic_id == 0 {
         return;
     }
     
     println!("Starting up AP with Local APIC ID: {}", apic_id);
 
+    // Ensure apic is "Software enabled"
+    let svr = local_apic_base + 0x0F0;
+    let current_svr = read_volatile(svr as *const u32);
+    // Bit 8 is Software Enable. Usually paired with a spurious vector (e.g., 0xFF)
+    write_volatile(svr as *mut u32, current_svr | (1 << 8) | 0xFF);
+
+    // TODO: REVISIT: this is a simple array allocated by the bootloader because it was 
+    // easy to do so, but it differs in size and relative location compared to the BSP 
+    // stack; probably there needs to be a unified strategy so that the AP stacks are comparatively 
+    // similar to the BSP stack
+    // This is also providing the top of the stack which is technically wrong.
     let stack_pointer = per_cpu_config.stack.as_ptr() as Address;
     X86_PAGER.get().unwrap().show_address_debug(VirtualAddress(stack_pointer));
 
@@ -194,26 +196,73 @@ unsafe fn startup_ap(
     }
     trampoline.set_stack_pointer(stack_pointer);
 
-    let mut x2apic_msr = x86_64::registers::model_specific::Msr::new(0x830);
-
-    //let xapic2_result = x86_64::instructions::msr::rdmsr(/* IA32_APIC_BASE MSR */ 0x1B);
-    //println!("xapic2 result: {}", xapic2_result);
     let (_, apic_flags) = x86_64::registers::model_specific::ApicBase::read();
-    if apic_flags.contains(ApicBaseFlags::X2APIC_ENABLE) {
-        println!("x2apid is enabled");
-    }
-    if apic_flags.contains(ApicBaseFlags::LAPIC_ENABLE) {
+    let apic_enabled = apic_flags.contains(ApicBaseFlags::LAPIC_ENABLE);
+    let x2apic_enabled = apic_flags.contains(ApicBaseFlags::X2APIC_ENABLE);
+
+    if apic_enabled {
         println!("lapic is enabled");
     }
-    println!("JJW");
-    let x2apic = apic_flags.contains(ApicBaseFlags::X2APIC_ENABLE);
+    if x2apic_enabled {
+        println!("x2apid is enabled");
+    }
 
-    // ensure apic is enabled (only if !x2apic?)
-    let svr = local_apic_base + 0x0F0;
-    let current_svr = read_volatile(svr as *const u32);
-    // Bit 8 is Software Enable. Usually paired with a spurious vector (e.g., 0xFF)
-    write_volatile(svr as *mut u32, current_svr | (1 << 8) | 0xFF);
+    if x2apic_enabled {
+        startup_ap_x2apic(
+            apic_id,
+            local_apic_base,
+            trampoline, 
+            per_cpu_config);
+    } else {
+        startup_ap_lapic(
+            apic_id,
+            local_apic_base,
+            trampoline, 
+            per_cpu_config);
+    }
+}
 
+unsafe fn startup_ap_x2apic(
+    apic_id: u32, 
+    local_apic_base: Address,
+    trampoline: &Trampoline, 
+    per_cpu_config: &mut PerCpuConfig) {
+
+    let mut x2apic_msr = x86_64::registers::model_specific::Msr::new(0x830);
+
+    let mut icr_low_value = 0x00004500; // INIT IPI, level-triggered
+    let x2apic_icr_value = (apic_id as u64) << 32 | icr_low_value as u64;
+    unsafe {
+        x2apic_msr.write(x2apic_icr_value);
+    }
+
+    // delay 10ms
+    timer_delay(Duration::from_millis(10));
+    // TODO: How to read status from x2apic?
+
+    // Send Startup IPI (SIPI) to the APIC ID with the trampoline vector
+    icr_low_value = 0x00004600 | (trampoline.get_vector() as u32); // SIPI with vector
+    let x2apic_icr_value = (apic_id as u64) << 32 | icr_low_value as u64;
+    unsafe {
+        x2apic_msr.write(x2apic_icr_value);
+    } 
+
+    // delay 200us
+    timer_delay(Duration::from_micros(200));
+    // TODO: read status (skip second SIPI if not required)
+
+    // Optional: Send second SIPI to the APIC ID with the trampoline vector
+    let x2apic_icr_value = (apic_id as u64) << 32 | icr_low_value as u64;
+    unsafe {
+        x2apic_msr.write(x2apic_icr_value);
+    }  
+}
+
+unsafe fn startup_ap_lapic(
+    apic_id: u32, 
+    local_apic_base: Address,
+    trampoline: &Trampoline, 
+    per_cpu_config: &mut PerCpuConfig) {
 
     let icr_high = local_apic_base + 0x310; // ICR High register offset
     let icr_low = local_apic_base + 0x300;  // ICR Low register offset
@@ -221,17 +270,10 @@ unsafe fn startup_ap(
     // Sent init IPI to the APIC ID
     let icr_high_value = apic_id << 24;
     let mut icr_low_value = 0x00004500; // INIT IPI, level-triggered
-    if x2apic {
-        let x2apic_icr_value = (apic_id as u64) << 32 | icr_low_value as u64;
-        unsafe {
-            x2apic_msr.write(x2apic_icr_value);
-        }
-    } else {
-        write_volatile(icr_high as *mut u32, icr_high_value);
-        write_volatile(icr_low as *mut u32, icr_low_value);
-        let result = read_volatile(icr_low as *const u32);
-        println!("Wrote {:x} {:x} to ICR result {:x}", icr_high_value, icr_low_value, result);
-    }
+    write_volatile(icr_high as *mut u32, icr_high_value);
+    write_volatile(icr_low as *mut u32, icr_low_value);
+    let result = read_volatile(icr_low as *const u32);
+    println!("Wrote {:x} {:x} to ICR result {:x}", icr_high_value, icr_low_value, result);
 
     // delay 10ms
     timer_delay(Duration::from_millis(10));
@@ -240,17 +282,10 @@ unsafe fn startup_ap(
 
     // Send Startup IPI (SIPI) to the APIC ID with the trampoline vector
     icr_low_value = 0x00004600 | (trampoline.get_vector() as u32); // SIPI with vector
-    if x2apic {
-        let x2apic_icr_value = (apic_id as u64) << 32 | icr_low_value as u64;
-        unsafe {
-            x2apic_msr.write(x2apic_icr_value);
-        } 
-    } else {
-        write_volatile(icr_high as *mut u32, icr_high_value);
-        write_volatile(icr_low as *mut u32, icr_low_value);
-        let result = read_volatile(icr_low as *const u32);
-        println!("Wrote {:x} {:x} to ICR result {:x}", icr_high_value, icr_low_value, result);
-    }
+    write_volatile(icr_high as *mut u32, icr_high_value);
+    write_volatile(icr_low as *mut u32, icr_low_value);
+    let result = read_volatile(icr_low as *const u32);
+    println!("Wrote {:x} {:x} to ICR result {:x}", icr_high_value, icr_low_value, result);
 
     // delay 200us
     timer_delay(Duration::from_micros(200));
@@ -260,47 +295,7 @@ unsafe fn startup_ap(
     // optional?
 
     // Send second SIPI to the APIC ID with the trampoline vector
-    if x2apic {
-        let x2apic_icr_value = (apic_id as u64) << 32 | icr_low_value as u64;
-        unsafe {
-            x2apic_msr.write(x2apic_icr_value);
-        }  
-    } else {
-        write_volatile(icr_high as *mut u32, icr_high_value);
-        write_volatile(icr_low as *mut u32, icr_low_value);
-        println!("Wrote {:x} {:x} to ICR", icr_high_value, icr_low_value);
-    }
+    write_volatile(icr_high as *mut u32, icr_high_value);
+    write_volatile(icr_low as *mut u32, icr_low_value);
+    println!("Wrote {:x} {:x} to ICR", icr_high_value, icr_low_value);
 }
-/* 
-
-
-#[repr(C)]
-pub struct LocalApic {
-    // ... other registers omitted for brevity ...
-    icr_low: *mut u32,  // Offset 0x300
-    icr_high: *mut u32, // Offset 0x310
-}
-
-impl LocalApic {
-    pub unsafe fn boot_ap(&self, apic_id: u8, vector: u8) {
-        // 1. Send INIT IPI
-        // High register: Destination APIC ID shifted left by 24
-        write_volatile(self.icr_high, (apic_id as u32) << 24);
-        // Low register: Assert INIT, level-triggered (0x00004500)
-        write_volatile(self.icr_low, 0x00004500);
-        
-        // TODO: Wait 10 milliseconds here
-        
-        // 2. Send First SIPI
-        write_volatile(self.icr_high, (apic_id as u32) << 24);
-        // Low register: Startup IPI, vector points to code (0x00004600 | vector)
-        write_volatile(self.icr_low, 0x00004600 | (vector as u32));
-        
-        // TODO: Wait 200 microseconds here
-        
-        // 3. Send Second SIPI
-        write_volatile(self.icr_high, (apic_id as u32) << 24);
-        write_volatile(self.icr_low, 0x00004600 | (vector as u32));
-    }
-}
-*/
