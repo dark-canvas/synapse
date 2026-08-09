@@ -145,11 +145,7 @@ global_asm!(
 );
 
 unsafe extern "C" {
-    // static per AP, stored in the global_asm code above, before copying into the SIPI vector
-    //static mut ap_cr3_address: u32;
-    //static mut ap_entry_address: u64;
-
-    // TODO: some of these probably need to be a u128, as they hold a 64-bit value and 
+    // NOTE: some of these probably need to be a u128, as they hold a 64-bit value and 
     // an instruction
     static mut lgdt_patch: u64;
     static mut gdt_pointer_patch: u32;
@@ -163,8 +159,30 @@ unsafe extern "C" {
     static trampoline_end: Address;
     static gdt_pointer: Address;
     static gdt_start: Address;
-    // Used to calculate an offset into the copied code to set per-AP values
-    //static ap_stack_address: Address;
+}
+
+macro_rules! relocate_jump {
+    ($jump:ident, $new_base:ident) => {
+        let jump_offset = 
+            Self::get_offset(unsafe { &raw const $jump as *const _ as Address }) as u32
+            + 6; // jump past the offset + the selector
+        $jump = $new_base as u32 + jump_offset;
+    };
+}
+
+macro_rules! relocate {
+    ($reloc:ident, $mask:expr, $value:ident) => {
+        // TODO: assert that bits in expr == bits in value
+        let bit_shift = $mask.trailing_zeros();
+        let mut reloc_copy = $reloc;
+        
+        let mut typed_value = $mask;
+        typed_value = $value.into();
+        
+        reloc_copy &= !$mask;
+        reloc_copy |= (typed_value << bit_shift);
+        $reloc = reloc_copy;
+    };
 }
 
 pub struct Trampoline {
@@ -172,14 +190,6 @@ pub struct Trampoline {
 }
 
 impl Trampoline {
-    /*
-    fn update_address<T>(base: Address, offset: usize, value: T) {
-        let target_address = (base as *mut u8).wrapping_add(offset) as *mut T;
-        unsafe {
-            *target_address = value;
-        }
-    }
-        */
 
     fn get_offset(address: Address) -> usize {
         let base_address = unsafe { &trampoline_start as *const _ as usize };
@@ -187,21 +197,13 @@ impl Trampoline {
         target_address - base_address
     }
 
-    fn update_jump(label: Address, address: Address) {
-        let address = address as usize;
-        let offset = Self::get_offset(label);
-        let target_address = address + offset + 1;
-
-        unsafe {
-            *(label as *mut u32) = target_address as u32;
-        }
-    }
-
     // TODO: specify the entry point as a rust function, and possibly even 
     // allow for passing a parameter to it (or a pointer to a struct of parameters)
     pub fn new(address: Address, cr3: Address, entry_point: u64) -> Self {
         assert!(address < 1024 * 1024); // 1mb
         assert!(address % 4096 == 0); // page aligned
+
+        let cr3 = u32::try_from(cr3).expect("CR3 address must be below 4GB");
 
         println!("Patching trampoline {:#x} -> {:#x}",
             unsafe { &trampoline_start as *const _ as usize },
@@ -216,68 +218,20 @@ impl Trampoline {
             // instruction (after the jump/0xea opcode), and the address needs to be 
             // updated to jump immediately after the instruction (after the address, 
             // which includes a selector as well)
-            let pmode_entry_offset = 
-                Self::get_offset(unsafe { &raw const protected_mode_entry_patch as *const _ as Address }) as u32
-                + 6; // jump past the offset + the selector
-            let lmode_entry_offset = 
-                Self::get_offset(unsafe { &raw const long_mode_entry_patch as *const _ as Address }) as u32
-                + 6; // jump past the offset + the selector
-            protected_mode_entry_patch = 
-                address as u32 + pmode_entry_offset;
-            long_mode_entry_patch = 
-                address as u32 + lmode_entry_offset;
+            relocate_jump!(protected_mode_entry_patch, address);
+            relocate_jump!(long_mode_entry_patch, address);
 
-
-            //let mut lgdt_patch_copy = lgdt_patch & 0x000000ffffff0000;
-            //let mut cr3_patch_copy = cr3_patch & 0x000000ffffffff00;
-            //let mut ap_entry_patch_copy: u128 = ap_entry_patch & 0x0000000000ffffffffffffffff0000;
-
-            let mut lgdt_patch_copy = lgdt_patch;
-            let mut cr3_patch_copy = cr3_patch;
-            let mut ap_entry_patch_copy: u128 = ap_entry_patch;
-            println!("lgdt patch: {:#x}", lgdt_patch_copy);
-            println!("cr3 patch: {:#x}", cr3_patch_copy);
-            
-
-            // lgdt (0x1122) == 0x0f 01, ModR/M Byte, 16-bit address
-            assert!(lgdt_patch & 0x000000ffffffffff == 0x112216010f );
-            // movl $0x11223344, %eax" == 0xb8, 32-bit address
-            assert!(cr3_patch & 0x000000ffffffffff == 0x11223344b8 );
-            // movq $0x112233445566778, %rax == 0x48 (rex.w prefix), 0xb8, 64-bit value
-            assert!(ap_entry_patch & 0x0000000000ffffffffffffffffffff == 0x1122334455667788b848u128);
-
-            lgdt_patch_copy &= 0xffffff0000ffffff;
-            cr3_patch_copy &= 0xffffff00000000ff;
-            println!("ap entry patch copy: {:#x}", ap_entry_patch_copy);
-            ap_entry_patch_copy &= 0xffffffffffff0000000000000000ffff;
-            println!("ap entry patch mask: {:#x}", ap_entry_patch_copy);
-
-            // offset (remember cs is already set)
             let relocated_gdt_pointer = 
-                /*address +*/ Self::get_offset(unsafe { &gdt_pointer as *const _ as Address }) as u64;
+                Self::get_offset(unsafe { &gdt_pointer as *const _ as Address }) as u64;
             let gdt_start_offset = 
                 Self::get_offset(unsafe { &gdt_start as *const _ as Address }) as u64;
-            println!("Relocated GDT pointer: {:#x}", relocated_gdt_pointer);
-            println!("lgdt patch before: {:x}", lgdt_patch_copy);
-            println!("To be or'ed with : {:X}", ((relocated_gdt_pointer as u64) << 24));
-            lgdt_patch_copy |= ((relocated_gdt_pointer as u64) << 24);
-            println!("lgdt patch after : {:x}", lgdt_patch_copy);
-            cr3_patch_copy |= (cr3 as u64) << 8;
-            ap_entry_patch_copy |= (entry_point as u128) << 16;
-            println!("ap entry patch done: {:#x}", ap_entry_patch_copy);
+            let relocated_gdt_start = 
+                gdt_start_offset as u32 + address as u32;
 
-            lgdt_patch = lgdt_patch_copy;
-            gdt_pointer_patch = gdt_start_offset as u32 + address as u32;
-            let cr3_original = cr3_patch;
-            cr3_patch = cr3_patch_copy;
-            let cr3_completed = cr3_patch;
-            println!("cr3 original: {:x}", cr3_original);
-            println!("cr3 patch   : {:x}", cr3_patch_copy);
-            println!("cr3 patched : {:x}", cr3_completed);
-
-            ap_entry_patch = ap_entry_patch_copy;
-
-            // stack must be done after the trampoline is copied, unique per AP
+            relocate!(cr3_patch, 0xffffffff00_u64, cr3);
+            relocate!(ap_entry_patch, 0xffffffffffffffff0000_u128, entry_point);
+            relocate!(lgdt_patch, 0xffff000000_u64, relocated_gdt_pointer);
+            relocate!(gdt_pointer_patch, 0xffffffff_u32, relocated_gdt_start);
         }
 
         // then copy into the real-mode address provided...
