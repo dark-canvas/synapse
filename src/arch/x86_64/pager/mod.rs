@@ -174,6 +174,78 @@ pub fn get_pl4_table() -> &'static mut PageTable {
     }
 }
 
+pub fn invalidate_page(addr: VirtualAddress) {
+    unsafe {
+        core::arch::asm!(
+            "invlpg 0({0:r})",
+            in(reg) addr.0,
+            options(nostack, preserves_flags, att_syntax)
+        );
+    }
+}
+
+pub fn set_mmio(virtual_addr: VirtualAddress) -> bool {
+    if let Some(entry) = get_entry(virtual_addr) {
+    
+        let new_flags = entry.flags() | (
+            PageTableFlags::WRITE_THROUGH & 
+            PageTableFlags::NO_CACHE);
+
+        entry.set_flags(new_flags);
+
+        invalidate_page(virtual_addr);
+        return true;
+    }
+    return false;
+}
+
+pub fn get_entry(virtual_addr: VirtualAddress) -> Option<&'static mut PageTableEntry> {
+    let pl4_index = (virtual_addr.0 as usize >> 39) & 0o777;
+    let pl3_index = (virtual_addr.0 as usize >> 30) & 0o777;
+    let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
+    let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
+
+    unsafe {
+        let pl4_table = get_pl4_table();
+
+        let pl4_entry = &mut pl4_table[pl4_index];
+        if pl4_entry.is_unused() {
+            return None;
+        }
+
+        // page directory entry is 4kb page...
+        let pl3_table = entry_to_table(&pl4_entry);
+        let pl3_entry = &mut pl3_table[pl3_index];
+        if pl3_entry.is_unused() {
+            return None;
+        }
+
+        if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
+            return Some(pl3_entry);
+        }
+
+        // this could be a 2mb page...
+        let pl2_table = entry_to_table(&pl3_entry);
+        let pl2_entry = &mut pl2_table[pl2_index];
+        if pl2_entry.is_unused() {
+            return None;
+        }
+
+        if pl2_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
+            return Some(pl2_entry);
+        }
+
+        let pl1_table = entry_to_table(&pl2_entry);
+        let pl1_entry = &mut pl1_table[pl1_index];
+        if pl1_entry.is_unused() {
+            return None;
+        }
+
+        Some(pl1_entry)
+    }
+}
+
+
 fn entry_to_table(entry: &PageTableEntry) -> &'static mut PageTable {
     unsafe {
         &mut *(physical_mirror(entry.addr().as_u64()) as *mut PageTable)
@@ -854,7 +926,56 @@ impl Pager {
 
             Ok(true)
         }
-    } 
+    }
+    
+    pub fn show_address_debug(&self, virtual_addr: VirtualAddress) {
+        let pl4_table = get_pl4_table();
+
+        let pl4_index = (virtual_addr.0 as usize >> 39) & 0o777;
+        let pl3_index = (virtual_addr.0 as usize >> 30) & 0o777;
+        let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
+        let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
+
+        println!("Address {:#x} indices:", virtual_addr.0);
+        println!("  {} {} {} {}", pl4_index, pl3_index, pl2_index, pl1_index);
+        
+        unsafe {
+            let pl4_entry = &mut pl4_table[pl4_index];
+            if pl4_entry.is_unused() {
+                println!("  no p4 entry");
+                return;
+            }
+            println!("  pl4 entry: {:?}", pl4_entry);
+
+            let pl3_table = entry_to_table(&pl4_entry);
+            let pl3_entry = &mut pl3_table[pl3_index];
+            if pl3_entry.is_unused() {
+                println!("  No pl3 entry");
+            }
+            println!("  pl3 entry: {:?}", pl3_entry);
+            if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
+                return;
+            }
+
+            let pl2_table = entry_to_table(&pl3_entry);
+            let pl2_entry = &mut pl2_table[pl2_index];
+            if pl2_entry.is_unused() {
+                println!("  no pl2 entry");
+            }
+            println!("  pl2 entry {:?}", pl2_entry);
+            if pl2_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
+                return;
+            }
+
+            let pl1_table = entry_to_table(&pl2_entry);
+            let pl1_entry = &mut pl1_table[pl1_index];
+            if !pl1_entry.is_unused() {
+                println!("  no pl1 entry");
+            }
+
+            println!("  pl1 entry {:?}", pl1_entry);
+        }
+    }
 }
 
 pub fn run_time_tests(pager: &Pager) {

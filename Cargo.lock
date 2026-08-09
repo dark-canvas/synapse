@@ -215,7 +215,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 [[package]]
 name = "satus-struct"
 version = "0.1.0"
-source = "git+https://github.com/dark-canvas/satus-struct#9d9c266b01ceace20ffd5cdee73240cca34a9fa4"
+source = "git+https://github.com/dark-canvas/satus-struct#1b40253be68385583b9de5d353ca67a4ea8373d2"
 
 [[package]]
 name = "scopeguard"

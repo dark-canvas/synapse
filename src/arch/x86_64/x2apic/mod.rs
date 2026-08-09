@@ -24,4 +24,9 @@ pub fn init() {
     unsafe {
         lapic.enable();
     }
+
+    // Note that the x2apic crate has functionality for starting up the APs as well.
+    // I currently do it myself in the smp module.
+    // https://docs.rs/x2apic/latest/x2apic/lapic/struct.LocalApic.html#method.send_ipi
+    // https://docs.rs/x2apic/latest/x2apic/lapic/struct.LocalApic.html#method.send_sipi
 }

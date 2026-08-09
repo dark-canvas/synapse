@@ -8,6 +8,7 @@ SECTIONS {
     {
         *(.data .data.*)
         *(.rodata .rodata.*)
+        *(.trampoline)
     }
     .bss :
     {
