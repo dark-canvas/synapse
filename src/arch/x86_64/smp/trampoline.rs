@@ -138,7 +138,7 @@ global_asm!(
     "gdt_pointer:",
     "    .word gdt_end - gdt_start - 1",
     "gdt_pointer_patch:",
-    "    .long 0",
+    "    .long 0x11223344",
 
     "trampoline_end:",
     options(att_syntax)
@@ -170,11 +170,37 @@ macro_rules! relocate_jump {
     };
 }
 
+// Macro that performs a relocation with some safety mechanisms.
+// Essentially takes $value and positions it into place in $reloc according to the provided $mask.
+// Relocation points in the above trampoline assembly are intentionally hardcoded with a sentinel 
+// value, so this macro ensures that the value being patched matches this sentinel before doing 
+// anything.
+// It also asserts that the value provided to replace the sentinel is of the same size as 
+// described in the mask.
+// Because this is a macro, and I can't tell the types of the parameters, even thought I *need*
+// to know the types, there are some strange points where I created a "typed_" variable and 
+// assign it a value only to immediately overwrite it.  The intention of this is to create a new 
+// variable of the same type as another.
 macro_rules! relocate {
     ($reloc:ident, $mask:expr, $value:ident) => {
-        // TODO: assert that bits in expr == bits in value
-        let bit_shift = $mask.trailing_zeros();
         let mut reloc_copy = $reloc;
+        let bit_shift = $mask.trailing_zeros();
+        let num_bits_in_mask = $mask.count_ones();
+
+        // assert that bits set in the mask == bits in value
+        assert_eq!(
+            core::mem::size_of_val(&$value) * 8, 
+            num_bits_in_mask.try_into().unwrap()
+        );
+
+        // assert that the value being patched matches our sentinel value
+        let mut typed_sentinel = $value;
+        typed_sentinel = (0x1122334455667788_u64 >> (64 - num_bits_in_mask))
+            .try_into().expect("able to construct sentinel value with patch's type");
+        assert_eq!(
+            typed_sentinel,
+            ((reloc_copy & $mask) >> bit_shift).try_into().unwrap()
+        );
         
         let mut typed_value = $mask;
         typed_value = $value.into();
@@ -221,16 +247,18 @@ impl Trampoline {
             relocate_jump!(protected_mode_entry_patch, address);
             relocate_jump!(long_mode_entry_patch, address);
 
-            let relocated_gdt_pointer = 
-                Self::get_offset(unsafe { &gdt_pointer as *const _ as Address }) as u64;
-            let gdt_start_offset = 
-                Self::get_offset(unsafe { &gdt_start as *const _ as Address }) as u64;
+            let gdt_pointer_offset : u16 = 
+                Self::get_offset(unsafe { &gdt_pointer as *const _ as Address })
+                .try_into().expect("Offset should be within 16-bit real mode segment");
+            let gdt_start_offset : u16 = 
+                Self::get_offset(unsafe { &gdt_start as *const _ as Address })
+                .try_into().expect("Offset should be within 16-bit real mode segment");
             let relocated_gdt_start = 
                 gdt_start_offset as u32 + address as u32;
 
             relocate!(cr3_patch, 0xffffffff00_u64, cr3);
             relocate!(ap_entry_patch, 0xffffffffffffffff0000_u128, entry_point);
-            relocate!(lgdt_patch, 0xffff000000_u64, relocated_gdt_pointer);
+            relocate!(lgdt_patch, 0xffff000000_u64, gdt_pointer_offset);
             relocate!(gdt_pointer_patch, 0xffffffff_u32, relocated_gdt_start);
         }
 
