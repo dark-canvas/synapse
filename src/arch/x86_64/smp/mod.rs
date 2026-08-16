@@ -1,5 +1,7 @@
 pub mod acpi_handler;
 pub mod trampoline;
+pub mod relocation;
+pub mod cpu_state;
 
 use x86_64::registers::model_specific::ApicBaseFlags;
 use x86_64::structures::paging::PageTableFlags;
