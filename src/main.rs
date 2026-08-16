@@ -13,6 +13,7 @@ mod logger;
 
 mod arch;
 mod errors;
+mod page_based;
 mod page_based_list;
 mod pager;
 mod stack;
