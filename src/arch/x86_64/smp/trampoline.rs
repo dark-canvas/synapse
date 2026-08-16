@@ -272,6 +272,7 @@ impl Trampoline {
     pub fn set_cpu_state(&self, state: &CpuState) {
         let cpu_state_addr : u64 = (state as *const CpuState) as u64;
 
+        println!("set_cpu_state: {:#x}", cpu_state_addr);
         unsafe {
             Relocation::new(self.to_target_vector(&cpu_state_patch), 0xffffffffffffffff0000u128).set(cpu_state_addr);
         }
