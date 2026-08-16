@@ -1,5 +1,7 @@
 use core::ffi::c_void;
 use core::arch::global_asm;
+use super::cpu_state::CpuState;
+use super::relocation::Relocation;
 use crate::arch::x86_64::pager::PHYSICAL_OFFSET;
 use crate::Address;
 
@@ -36,6 +38,7 @@ global_asm!(
     ".globl ap_entry_patch",
     ".globl projected_mode_entry_patch",
     ".globl long_mode_entry_patch",
+    ".globl cpu_state_patch",
  
     "trampoline_start:",
     "    cli",
@@ -104,15 +107,23 @@ global_asm!(
     "    movw %ax, %fs",
     "    movw %ax, %gs",
 
-    // nops to ensure stack_patch is aligned (for relocation)
-    "nop",
-    "nop",
-    "nop",
-    "nop",
-    "nop",
+    // nops to ensure stack_patch is aligned (for relocation) TODO: remove?
+    "    nop",
+    "    nop",
+    "    nop",
+    "    nop",
+    "    nop",
     "stack_patch:",
     "    movq $0x1122334455667788, %rax", // placeholder for relocation
     "    movq %rax, %rsp",
+
+    // setup the per-cpu state
+    "cpu_state_patch:",
+    "    movq $0x1122334455667788, %rdx",  // full 64-bit CpuState pointer needs to be split...
+    "    movl $0xc0000102, %ecx",          // IA32_GS_BASE
+    "    mov %edx, %eax",                  // lower 32-bits to eax
+    "    shrq $32, %rdx",                  // uper 32-bits in edx
+    "    wrmsr",
 
     // jump into the rust entry code
     "ap_entry_patch:",
@@ -145,11 +156,17 @@ global_asm!(
 );
 
 unsafe extern "C" {
-    static mut lgdt_patch: u64;
-    static mut gdt_pointer_patch: u32;
-    static mut cr3_patch: u64;
-    static mut stack_patch: u128;
-    static mut ap_entry_patch: u128;
+    // exported labels from the assembly; we just want their address, so the type doesn't matter
+    static lgdt_patch: u8;
+    static gdt_pointer_patch: u8;
+    static cr3_patch: u8;
+    static ap_entry_patch: u8;
+    static stack_patch: u128;
+    static cpu_state_patch: u128;
+    
+    // these are written directly (we could use the Relocation helper, but their pointing directly 
+    // to the value that needs modification (no mask or shift needed) so it's easy enough to modify 
+    // them directly)
     static mut long_mode_entry_patch: u32;
     static mut protected_mode_entry_patch: u32;
 
@@ -167,47 +184,6 @@ macro_rules! relocate_jump {
             Self::get_offset(unsafe { &raw const $jump as *const _ as Address }) as u32
             + 6; // jump past the offset + the selector
         $jump = $new_base as u32 + jump_offset;
-    };
-}
-
-// Macro that performs a relocation with some safety mechanisms.
-// Essentially takes $value and positions it into place in $reloc according to the provided $mask.
-// Relocation points in the above trampoline assembly are intentionally hardcoded with a sentinel 
-// value, so this macro ensures that the value being patched matches this sentinel before doing 
-// anything.
-// It also asserts that the value provided to replace the sentinel is of the same size as 
-// described in the mask.
-// Because this is a macro, and I can't tell the types of the parameters, even thought I *need*
-// to know the types, there are some strange points where I created a "typed_" variable and 
-// assign it a value only to immediately overwrite it.  The intention of this is to create a new 
-// variable of the same type as another.
-macro_rules! relocate {
-    ($reloc:expr, $mask:expr, $value:ident) => {
-        let mut reloc_copy = $reloc;
-        let bit_shift = $mask.trailing_zeros();
-        let num_bits_in_mask = $mask.count_ones();
-
-        // assert that bits set in the mask == bits in value
-        assert_eq!(
-            core::mem::size_of_val(&$value) * 8, 
-            num_bits_in_mask.try_into().unwrap()
-        );
-
-        // assert that the value being patched matches our sentinel value
-        let mut typed_sentinel = $value;
-        typed_sentinel = (0x1122334455667788_u64 >> (64 - num_bits_in_mask))
-            .try_into().expect("able to construct sentinel value with patch's type");
-        assert_eq!(
-            typed_sentinel,
-            ((reloc_copy & $mask) >> bit_shift).try_into().unwrap()
-        );
-        
-        let mut typed_value = $mask;
-        typed_value = $value.into();
-        
-        reloc_copy &= !$mask;
-        reloc_copy |= (typed_value << bit_shift);
-        $reloc = reloc_copy;
     };
 }
 
@@ -256,10 +232,10 @@ impl Trampoline {
             let relocated_gdt_start = 
                 gdt_start_offset as u32 + address as u32;
 
-            relocate!(cr3_patch, 0xffffffff00_u64, cr3);
-            relocate!(ap_entry_patch, 0xffffffffffffffff0000_u128, entry_point);
-            relocate!(lgdt_patch, 0xffff000000_u64, gdt_pointer_offset);
-            relocate!(gdt_pointer_patch, 0xffffffff_u32, relocated_gdt_start);
+            Relocation::new(&cr3_patch, 0xffffffff00_u64).test_and_set(cr3);
+            Relocation::new(&ap_entry_patch, 0xffffffffffffffff0000_u128).test_and_set(entry_point);
+            Relocation::new(&lgdt_patch, 0xffff000000_u64).test_and_set(gdt_pointer_offset);
+            Relocation::new(&gdt_pointer_patch, 0xffffffff_u32).test_and_set(relocated_gdt_start);
         }
 
         // then copy into the real-mode address provided...
@@ -280,28 +256,33 @@ impl Trampoline {
         self.address / 4096
     }
 
+    // convert a reference from the embedded trampoline into it's corresponding location 
+    // in the allocated SIPI vector
+    fn to_target_vector<T>(&self, source: &T) -> &'static u8 {
+        let trampoline_base = unsafe { &trampoline_start as *const _ as usize };
+        let new_trampoline_base = self.address as usize;
+        let source_addr = source as *const T as usize;
+        
+        let rebased_address = source_addr - trampoline_base + new_trampoline_base;
+
+        let byte_ref: &u8 = unsafe { &*(rebased_address as *const u8) };
+        return byte_ref;
+    }
+
+    pub fn set_cpu_state(&self, state: &CpuState) {
+        let cpu_state_addr : u64 = (state as *const CpuState) as u64;
+
+        unsafe {
+            Relocation::new(self.to_target_vector(&cpu_state_patch), 0xffffffffffffffff0000u128).set(cpu_state_addr);
+        }
+
+    }
+
     pub fn set_stack_pointer(&self, stack_pointer: Address) {
         println!("set_stack_pointer: {:#x}", stack_pointer);
-        // stack_patch points to the original trampoline, but we need the relocated address
-        let stack_patch_orig = unsafe { stack_patch };
-        
-        let stack_patch_offset = Self::get_offset(unsafe { &raw const stack_patch as *const _ as Address }) as u64;
-        let relocated_stack_patch = 
-            self.address + PHYSICAL_OFFSET + stack_patch_offset;
-        
+ 
         unsafe {
-            let stack_patch_ptr = relocated_stack_patch as *mut u128;
-
-            assert!(stack_patch & 0x0000000000ffffffffffffffffffff == 0x1122334455667788b848u128);
-            let mut stack_patch_copy: u128 = *stack_patch_ptr & 0xffffffffffff0000000000000000ffff;
-            println!("stack patch orig: {:#x}", stack_patch_orig);
-            println!("stack patch copy: {:#x}", stack_patch_copy);
-            stack_patch_copy |= (stack_pointer as u128) << 16;
-            println!("stack patch done: {:#x}", stack_patch_copy);
-            *stack_patch_ptr = stack_patch_copy;
-
-            // TODO: would be nice if this would work (asserts on sentinel... figure out why)
-            // relocate!((*stack_patch_ptr), 0xffffffffffffffff0000_u128, stack_pointer);
+            Relocation::new(self.to_target_vector(&stack_patch), 0xffffffffffffffff0000_u128).set(stack_pointer);
         }
     }
 }
