@@ -107,12 +107,11 @@ global_asm!(
     "    movw %ax, %fs",
     "    movw %ax, %gs",
 
-    // nops to ensure stack_patch is aligned (for relocation) TODO: remove?
-    "    nop",
-    "    nop",
-    "    nop",
-    "    nop",
-    "    nop",
+    // enable fs/gs base registers
+    "    movq %cr4, %rax",
+    "    orq $0x10000, %rax",    // Set bit 16 (FSGSBASE)
+    "    movq %rax, %cr4",
+
     "stack_patch:",
     "    movq $0x1122334455667788, %rax", // placeholder for relocation
     "    movq %rax, %rsp",
