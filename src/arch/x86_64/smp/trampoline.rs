@@ -107,12 +107,11 @@ global_asm!(
     "    movw %ax, %fs",
     "    movw %ax, %gs",
 
-    // nops to ensure stack_patch is aligned (for relocation) TODO: remove?
-    "    nop",
-    "    nop",
-    "    nop",
-    "    nop",
-    "    nop",
+    // enable fs/gs base registers
+    "    movq %cr4, %rax",
+    "    orq $0x10000, %rax",    // Set bit 16 (FSGSBASE)
+    "    movq %rax, %cr4",
+
     "stack_patch:",
     "    movq $0x1122334455667788, %rax", // placeholder for relocation
     "    movq %rax, %rsp",
@@ -272,6 +271,7 @@ impl Trampoline {
     pub fn set_cpu_state(&self, state: &CpuState) {
         let cpu_state_addr : u64 = (state as *const CpuState) as u64;
 
+        println!("set_cpu_state: {:#x}", cpu_state_addr);
         unsafe {
             Relocation::new(self.to_target_vector(&cpu_state_patch), 0xffffffffffffffff0000u128).set(cpu_state_addr);
         }

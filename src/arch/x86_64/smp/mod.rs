@@ -24,12 +24,19 @@ use crate::arch::x86_64::pager::PageType;
 use crate::arch::x86_64::util::registers::get_cr3;
 use self::acpi_handler::SynapseAcpiHandler;
 use self::trampoline::Trampoline;
+use self::cpu_state::CpuState;
 
 pub fn kernel_ap_entry() {
+    // Uncommenting this causes it to fail...
+    let cpu_state = unsafe { CpuState::get_local_cpu_state() };
+    cpu_state.state = cpu_state::State::Initializing;
+
     // loop forever...
     loop {
         core::hint::spin_loop();
     }
+
+    cpu_state.state = cpu_state::State::Initialized;
 }
 
 // REVISIT: a lot of this function (and others here) are very apic/x2apic related and, debateably, 
@@ -193,10 +200,15 @@ unsafe fn startup_ap(
     let stack_pointer = per_cpu_config.stack.as_ptr() as Address;
     X86_PAGER.get().unwrap().show_address_debug(VirtualAddress(stack_pointer));
 
+    // TODO: populate
+    let cpu_state = CpuState::new();
+    cpu_state.apic_id = u8::try_from(apic_id).unwrap();
+
     for byte in per_cpu_config.stack.iter_mut() {
         *byte = 0x55;
     }
     trampoline.set_stack_pointer(stack_pointer);
+    trampoline.set_cpu_state(cpu_state);
 
     let (_, apic_flags) = x86_64::registers::model_specific::ApicBase::read();
     let apic_enabled = apic_flags.contains(ApicBaseFlags::LAPIC_ENABLE);
