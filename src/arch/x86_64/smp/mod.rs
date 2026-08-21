@@ -27,10 +27,16 @@ use self::trampoline::Trampoline;
 use self::cpu_state::CpuState;
 
 pub fn kernel_ap_entry() {
+    // Uncommenting this causes it to fail...
+    let cpu_state = unsafe { CpuState::get_local_cpu_state() };
+    cpu_state.state = cpu_state::State::Initializing;
+
     // loop forever...
     loop {
         core::hint::spin_loop();
     }
+
+    cpu_state.state = cpu_state::State::Initialized;
 }
 
 // REVISIT: a lot of this function (and others here) are very apic/x2apic related and, debateably, 
@@ -196,6 +202,7 @@ unsafe fn startup_ap(
 
     // TODO: populate
     let cpu_state = CpuState::new();
+    cpu_state.apic_id = u8::try_from(apic_id).unwrap();
 
     for byte in per_cpu_config.stack.iter_mut() {
         *byte = 0x55;

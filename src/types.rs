@@ -1,5 +1,6 @@
 pub type Address = u64;
 
+pub type CpuId = u8;
 /*
 TODO:
 Make address a concrete type, and add 
