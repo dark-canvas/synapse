@@ -79,12 +79,10 @@ use mockall::predicate::*;
 
 use crate::stack::{Stack, SimpleStack, EXPAND_UP};
 use crate::types::Address;
-use super::PageIterator;
 
 use super::address_aggregator::{AddressAggregator, PageAggregator};
 use super::VirtualAddress;
 use super::PAGE_SIZE_1GB;
-use super::PAGE_SIZE_4KB;
 pub const ADDRESSES_PER_PAGE: usize = 512; // make this a const in pager?
 
 #[derive(PartialEq, PartialOrd)]
@@ -191,7 +189,7 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
         let mut result = None;
         if PAGE_SIZE != PAGE_SIZE_1GB {
-            result = match(new_addr) {
+            result = match new_addr {
                 true  => self.aggregate_map.mark_available(page_addr),
                 false => self.aggregate_map.deallocate(page_addr),
             };

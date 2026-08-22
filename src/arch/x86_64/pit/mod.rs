@@ -10,17 +10,9 @@ At the kernel level, you program the PIT (Programmable Interval Timer) or APIC t
         Enable Interrupts: Use x86_64::instructions::interrupts::enable(). 
 */
 
-use core::arch::asm;
 use core::time::Duration;
-use x86_64::VirtAddr;
 use x86_64::structures::idt::InterruptStackFrame;
 use x86_64::registers::model_specific::Msr;
-use x86_64::registers::rflags::RFlags;
-use super::scheduler::task::Task;
-use super::scheduler::CURRENT_TASK;
-use super::util::register_snapshot::RegisterSnapshot;
-use crate::get_register_snapshot;
-use crate::restore_register_snapshot;
 
 // Port delcarations
 const TIMER0_CNTR: u16 = 0x40;
@@ -57,7 +49,7 @@ static mut FREQ: u64 = 0;
 
 // It's debateable whether this belongs here, or in the IDT module...  ultimately it'll defer to common multitasking code...
 pub extern "x86-interrupt" fn timer_interrupt_handler(
-    stack_frame: InterruptStackFrame)
+    _stack_frame: InterruptStackFrame)
 {
     // increment ticks by 1
     unsafe { TICKS += 1; }
@@ -79,7 +71,7 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(
     //   store them in our task structure
     //   replace them with the next task to run
     
-    /**
+    /*
     For multitasking...
     1. Save the current task's state (registers, stack pointer, etc.) to its Task Control Block (TCB).
     2. Select the next task to run using a scheduling algorithm (e.g., round-robin, priority-based).
@@ -89,7 +81,7 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(
     
     // TODO: need a better/common way to signal EOI (for all interrupts) and in the x2apic mod
     unsafe { 
-        let mut apic_eoi_msr = x86_64::registers::model_specific::Msr::new(0x80b);
+    let mut apic_eoi_msr = Msr::new(0x80b);
         apic_eoi_msr.write(0x0)
     };
 

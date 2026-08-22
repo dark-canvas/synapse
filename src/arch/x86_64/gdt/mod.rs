@@ -30,16 +30,16 @@ static mut MCE_STACK: [u8; MCE_STACK_SIZE] = [0; MCE_STACK_SIZE];
 static TSS: Lazy<TaskStateSegment> = Lazy::new(|| {
     let mut tss = TaskStateSegment::new();
     tss.interrupt_stack_table[DOUBLE_FAULT_STACK_INDEX as usize] = 
-        VirtAddr::from_ptr(unsafe { &raw const DOUBLE_FAULT_STACK }) +
+        VirtAddr::from_ptr(&raw const DOUBLE_FAULT_STACK) +
         DOUBLE_FAULT_STACK_SIZE as u64;
     tss.interrupt_stack_table[NMI_STACK_INDEX as usize] = 
-        VirtAddr::from_ptr(unsafe { &raw const NMI_STACK }) +
+        VirtAddr::from_ptr(&raw const NMI_STACK) +
         NMI_STACK_SIZE as u64;
     tss.interrupt_stack_table[DEBUG_STACK_INDEX as usize] = 
-        VirtAddr::from_ptr(unsafe { &raw const DEBUG_STACK }) +
+        VirtAddr::from_ptr(&raw const DEBUG_STACK) +
         DEBUG_STACK_SIZE as u64;
     tss.interrupt_stack_table[MCE_STACK_INDEX as usize] = 
-        VirtAddr::from_ptr(unsafe { &raw const MCE_STACK }) +
+        VirtAddr::from_ptr(&raw const MCE_STACK) +
         MCE_STACK_SIZE as u64;
 
     tss

@@ -1,4 +1,3 @@
-use crate::arch::x86_64::X86_PAGER;
 use crate::page_based;
 use crate::types::CpuId;
 use crate::errors::ErrCode;
@@ -30,24 +29,28 @@ impl CpuState {
     // TODO: pick a standard form for inline assembly (AT&T... look into the nostack, pure, readonly variables as well)
     pub unsafe fn get_local_cpu_state() -> &'static mut CpuState {
         let base_address: usize;
-        asm!(
-            "rdgsbase {}",
-            out(reg) base_address,
-            options(nostack, pure, readonly)
-        );
-        &mut *(base_address as *mut CpuState)
+        unsafe {
+            asm!(
+                "rdgsbase {}",
+                out(reg) base_address,
+                options(nostack, pure, readonly)
+            );
+        }
+        unsafe { &mut *(base_address as *mut CpuState) }
     }
 }
 
 // TODO: modify read (movq) based on size of T?
 unsafe fn get_cpu_state_at_offset<T: PrimInt>(offset: usize) -> T {
     let mut val: u64;
-    core::arch::asm!(
-        "movq %gs:(,{offset}), {val}",
-        offset = in(reg) offset,
-        val = out(reg) val,
-        options(att_syntax),
-    );
+    unsafe {
+        core::arch::asm!(
+            "movq %gs:(,{offset}), {val}",
+            offset = in(reg) offset,
+            val = out(reg) val,
+            options(att_syntax),
+        );
+    }
     num_traits::cast(val).unwrap()
 }
     

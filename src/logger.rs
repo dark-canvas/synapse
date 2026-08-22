@@ -42,6 +42,7 @@ impl FrameBufferLogger {
         }
     }
 
+    #[allow(dead_code)]
     pub fn disable(mut self) -> Self {
         self.enabled = false;
         self
@@ -54,7 +55,7 @@ impl Write for FrameBufferLogger {
             return Ok(());
         }
         let square_size = 10;
-        let color = match(s) {
+        let color = match s {
             LOG_ALLOC_4KB => 0x00FF0000, // Red
             LOG_ALLOC_2MB => 0x0000FF00, // Green
             LOG_ALLOC_1GB => 0x000000FF, // Blue
@@ -70,7 +71,7 @@ impl Write for FrameBufferLogger {
            
         for y in 0..square_size {
             let mut offset = ((self.current_y + y) * self.bytes_per_line) + (self.current_x * 4);
-            for x in 0..square_size {
+            for _ in 0..square_size {
                 unsafe {
                     core::ptr::write_volatile((self.address + offset as Address) as *mut u32, color);
                 }

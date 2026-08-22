@@ -1,6 +1,5 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::ops::Drop;
-use crate::types::CpuId;
 use crate::errors::ErrCode;
 use crate::arch::x86_64::smp::cpu_state; // need a better way to do this across arch!  Think of a design!
 
@@ -51,13 +50,10 @@ impl CpuMutex {
                 Ordering::Relaxed) {
             
                 Ok(_) => return Ok( CpuMutexGuard::new(self) ),
-                Err(cpu) => continue, // lock is owned by `cpu` now
+                Err(_cpu) => continue, // lock is owned by `cpu` now
             
             }
-            core::hint::spin_loop();
         }
-
-        Err(ErrCode::Unknown)
     }
 
     pub fn Unlock(&mut self) {
@@ -68,7 +64,7 @@ impl CpuMutex {
             Ordering::Relaxed) {
         
             Ok(_) => return,
-            Err(cpu) => self.poisoned = true, // lock is poisoned!!!
+            Err(_cpu) => self.poisoned = true, // lock is poisoned!!!
         
         }
     }

@@ -29,7 +29,7 @@ pub type TaskList = PageBasedList<Task>;
 impl Task {
     pub fn new_kernel_task(entry: Address, stack: VirtualAddress, stack_size: usize) -> Self {
         // REVISIT: this wouldn't have to be mut with rip and rflags were separate from registers..?
-        let mut result = Task { 
+        let result = Task { 
             id: 0, 
             registers: RegisterSnapshot::default(),
             rip: entry, // TODO: need to wrap this in a handler that calls entry and cleans up upon return

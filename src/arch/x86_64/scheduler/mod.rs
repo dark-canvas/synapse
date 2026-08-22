@@ -7,8 +7,6 @@ use super::pager::get_kernel_cr3;
 use crate::Address;
 use crate::errors::ErrCode;
 use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
-use crate::get_register_snapshot;
-use crate::restore_register_snapshot;
 
 // TODO:
 //use crate::scheduler::Scheduler as SchedulerInterface;
@@ -141,7 +139,7 @@ pub static mut NULL_TASK: Task = Task {
 
 #[unsafe(no_mangle)]
 #[used]
-pub static mut CURRENT_TASK: *mut Task = unsafe { &raw mut NULL_TASK as *mut Task };
+pub static mut CURRENT_TASK: *mut Task = &raw mut NULL_TASK as *mut Task;
 
 pub struct Scheduler {
     tasks: TaskList 

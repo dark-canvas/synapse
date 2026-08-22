@@ -1,5 +1,4 @@
 use atomic_refcell::AtomicRefCell;
-use spin::Lazy;
 use thiserror::Error;
 use crate::errors::ErrCode;
 use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
@@ -56,12 +55,12 @@ struct NullPager{}
 impl Pager for NullPager {
     fn get_page_size(&self) -> usize { 0 }
     fn allocate_physical(&self) -> Result<PhysicalAddress, ErrCode> { Err(ErrCode::Unimplemented) }
-    fn free_physical(&self, addr: PhysicalAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
-    fn allocate_virtual(&self, num: usize, to_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode> { Err(ErrCode::Unimplemented) }
-    fn free_virtual(&self, num: usize, base_addr: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
-    fn map_physical_to_virtual(&self, phys: PhysicalAddress, virt: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
-    fn get_virtual_address(&self, addr: PhysicalAddress) -> Result<VirtualAddress, ErrCode> { Err(ErrCode::Unimplemented) }
-    fn get_physical_address(&self, addr: VirtualAddress) -> Result<PhysicalAddress, ErrCode> { Err(ErrCode::Unimplemented) }
+    fn free_physical(&self, _addr: PhysicalAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn allocate_virtual(&self, _num: usize, _to_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode> { Err(ErrCode::Unimplemented) }
+    fn free_virtual(&self, _num: usize, _base_addr: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn map_physical_to_virtual(&self, _phys: PhysicalAddress, _virt: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn get_virtual_address(&self, _addr: PhysicalAddress) -> Result<VirtualAddress, ErrCode> { Err(ErrCode::Unimplemented) }
+    fn get_physical_address(&self, _addr: VirtualAddress) -> Result<PhysicalAddress, ErrCode> { Err(ErrCode::Unimplemented) }
 }
 
 // The PAGER static global is expected to be replaced with the real, arch-specific, pager at startup
