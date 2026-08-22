@@ -72,6 +72,7 @@ where T: Clone + Copy + PartialEq {
         self
     }
 
+    #[allow(dead_code)]
     pub fn get_index(&self) -> usize {
         self.num as usize
     }

@@ -37,6 +37,7 @@ use self::handlers::DebugMetaData;
 use self::handlers::DivideByZeroMetaData;
 
 // TODO: use this in the interrupt meta data structs?
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum InterruptIndex {

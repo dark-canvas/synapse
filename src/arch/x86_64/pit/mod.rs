@@ -10,42 +10,52 @@ At the kernel level, you program the PIT (Programmable Interval Timer) or APIC t
         Enable Interrupts: Use x86_64::instructions::interrupts::enable(). 
 */
 
-use core::arch::asm;
 use core::time::Duration;
-use x86_64::VirtAddr;
 use x86_64::structures::idt::InterruptStackFrame;
 use x86_64::registers::model_specific::Msr;
-use x86_64::registers::rflags::RFlags;
-use super::scheduler::task::Task;
-use super::scheduler::CURRENT_TASK;
-use super::util::register_snapshot::RegisterSnapshot;
-use crate::get_register_snapshot;
-use crate::restore_register_snapshot;
 
 // Port delcarations
+#[allow(dead_code)]
 const TIMER0_CNTR: u16 = 0x40;
+#[allow(dead_code)]
 const TIMER1_CNTR: u16 = 0x41;
+#[allow(dead_code)]
 const TIMER2_CNTR: u16 = 0x42;
+#[allow(dead_code)]
 const TIMER_CTRL: u16 = 0x43;
 
 // for use with TIMER_CTRL port
+#[allow(dead_code)]
 const TIMER0: u8 = 0 << 6;
+#[allow(dead_code)]
 const TIMER1: u8 = 1 << 6;
+#[allow(dead_code)]
 const TIMER2: u8 = 2 << 6;
 
+#[allow(dead_code)]
 const TIMER_LATCH: u8 = 0 << 4;
+#[allow(dead_code)]
 const TIMER_LSB: u8 = 1 << 4;
+#[allow(dead_code)]
 const TIMER_MSB: u8 = 2 << 4;
+#[allow(dead_code)]
 const TIMER_WHOLE: u8 = TIMER_LSB | TIMER_MSB;
 
+#[allow(dead_code)]
 const TIMER_MODE0: u8 = 0 << 1;
+#[allow(dead_code)]
 const TIMER_MODE1: u8 = 1 << 1;
+#[allow(dead_code)]
 const TIMER_MODE2: u8 = 2 << 1;
+#[allow(dead_code)]
 const TIMER_MODE3: u8 = 3 << 1;
+#[allow(dead_code)]
 const TIMER_MODE4: u8 = 4 << 1;
+#[allow(dead_code)]
 const TIMER_MODE5: u8 = 5 << 1;
 
 const TIMER_BIN16: u8 = 0;
+#[allow(dead_code)]
 const TIMER_BCD: u8 = 1;
 
 const PIT_FREQ: u32 = 0x1234DD;
@@ -57,7 +67,7 @@ static mut FREQ: u64 = 0;
 
 // It's debateable whether this belongs here, or in the IDT module...  ultimately it'll defer to common multitasking code...
 pub extern "x86-interrupt" fn timer_interrupt_handler(
-    stack_frame: InterruptStackFrame)
+    _stack_frame: InterruptStackFrame)
 {
     // increment ticks by 1
     unsafe { TICKS += 1; }
@@ -79,7 +89,7 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(
     //   store them in our task structure
     //   replace them with the next task to run
     
-    /**
+    /*
     For multitasking...
     1. Save the current task's state (registers, stack pointer, etc.) to its Task Control Block (TCB).
     2. Select the next task to run using a scheduling algorithm (e.g., round-robin, priority-based).
@@ -89,7 +99,7 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(
     
     // TODO: need a better/common way to signal EOI (for all interrupts) and in the x2apic mod
     unsafe { 
-        let mut apic_eoi_msr = x86_64::registers::model_specific::Msr::new(0x80b);
+    let mut apic_eoi_msr = Msr::new(0x80b);
         apic_eoi_msr.write(0x0)
     };
 

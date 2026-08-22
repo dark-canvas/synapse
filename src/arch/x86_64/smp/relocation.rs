@@ -11,8 +11,8 @@ pub struct Relocation<T> {
     mask: T,
 }
 
-impl<MASK_T: RelocationType> Relocation<MASK_T> {
-    pub fn new(addr: &u8, mask: MASK_T) -> Relocation<MASK_T> {
+impl<MaskT: RelocationType> Relocation<MaskT> {
+    pub fn new(addr: &u8, mask: MaskT) -> Relocation<MaskT> {
         assert!( mask.trailing_zeros() & 0x7 == 0, "mask target must be byte aligned");
         Relocation {
             addr: addr as *const u8,
@@ -20,7 +20,7 @@ impl<MASK_T: RelocationType> Relocation<MASK_T> {
         }
     }
 
-    pub fn set<VALUE_T: PrimInt + core::fmt::LowerHex>(&self, value: VALUE_T) {
+    pub fn set<ValueT: PrimInt + core::fmt::LowerHex>(&self, value: ValueT) {
         assert_eq!(
             core::mem::size_of_val(&value) * 8, 
             self.mask.count_ones().try_into().unwrap(),
@@ -30,7 +30,7 @@ impl<MASK_T: RelocationType> Relocation<MASK_T> {
         println!("Offseting {:#x} by {} bytes", self.addr as usize, byte_offset);
 
         unsafe {
-            let patch_ptr = self.addr.add( byte_offset ) as *mut VALUE_T;
+            let patch_ptr = self.addr.add( byte_offset ) as *mut ValueT;
 
             println!("Patching {} byte value at {:#x} with {:#x}", 
                 core::mem::size_of_val(&value), 
@@ -41,7 +41,7 @@ impl<MASK_T: RelocationType> Relocation<MASK_T> {
         }
     }
 
-    pub fn test_and_set<VALUE_T: PrimInt + core::fmt::LowerHex>(&self, value: VALUE_T) {
+    pub fn test_and_set<ValueT: PrimInt + core::fmt::LowerHex>(&self, value: ValueT) {
         let byte_offset = (self.mask.trailing_zeros() / 8) as usize;
         let num_bytes = core::mem::size_of_val(&value);
 

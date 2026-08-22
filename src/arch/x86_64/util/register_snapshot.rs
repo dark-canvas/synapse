@@ -1,4 +1,3 @@
-use core::arch::asm;
 use crate::KERNEL_START;
 
 #[repr(C)]
@@ -59,9 +58,9 @@ impl RegisterSnapshot {
 #[macro_export]
 macro_rules! get_register_snapshot {
     () => {{
-        let mut snapshot = RegisterSnapshot::default();
+        let mut snapshot = crate::arch::x86_64::util::register_snapshot::RegisterSnapshot::default();
         unsafe {
-            asm!(
+            ::core::arch::asm!(
                 "nop",
                 out("rax") snapshot.rax, out("rcx") snapshot.rcx, out("rdx") snapshot.rdx,
                 out("rsi") snapshot.rsi, out("rdi") snapshot.rdi,
@@ -78,7 +77,7 @@ macro_rules! get_register_snapshot {
             // At this point it doesn't matter if it clobbers another register, since we've already saved them 
             // off.  I fully expect the compiler just emits a "mov snapshot.rbx, rbx" anyway, but it apparently 
             // doesn't realize that's all I was attempting to do above as well.
-            asm!(
+            ::core::arch::asm!(
                 "mov {0}, rbp",
                 "mov {1}, rsp",
                 "mov {2}, rbx",
@@ -97,9 +96,9 @@ macro_rules! get_register_snapshot {
 #[macro_export]
 macro_rules! restore_register_snapshot {
     ($snapshot:expr) => {{
-        let snapshot: &RegisterSnapshot = $snapshot;
+        let snapshot: &crate::arch::x86_64::util::register_snapshot::RegisterSnapshot = $snapshot;
         unsafe {
-            asm!(
+            ::core::arch::asm!(
                 "mov r15, {0}",
                 "mov r14, {1}",
                 "mov r13, {2}",
@@ -135,12 +134,12 @@ macro_rules! restore_register_snapshot {
                 //in(reg) snapshot.rflags,
                 //in(reg) snapshot.rdi,
             );
-            asm!(
+            ::core::arch::asm!(
                 "push {0}",
                 "popfq",
                 in(reg) snapshot.rflags,
             );
-            asm!(
+            ::core::arch::asm!(
                 "mov rdi, {0}",
                 in(reg) snapshot.rdi,
             );
