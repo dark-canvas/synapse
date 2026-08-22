@@ -15,61 +15,61 @@ Each index into the PLM4 table references a 512GB block of memory.
 <table>
   <thead>
     <tr>
-      <th style="text-align: center;">PLM Index</th>
-      <th style="text-align: center;">PLM Address Range</th>
-      <th style="text-align: center;">OS Item</th>
-      <th style="text-align: center;">Range</th>
-      <th style="text-align: center;">Notes</th>
+      <th align="center">PLM Index</th>
+      <th align="center">PLM Address Range</th>
+      <th align="center">OS Item</th>
+      <th align="center">Range</th>
+      <th align="center">Notes</th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <td style="text-align: center;" rowspan="8">511</td>
-      <td style="text-align: center;" rowspan="8"><tt>0xFFFFFFFFFFFFFFFF</tt><br><tt>0xFFFFFF8000000000</tt></td>
-      <td style="text-align: center;">CPU Stacks/Metadata</td>
-      <td style="text-align: center;"><tt>0xFFFFFFFFFFFFFFFF</tt><br><tt>...</tt></td>
+      <td align="center" rowspan="8">511</td>
+      <td align="center" rowspan="8"><tt>0xFFFFFFFFFFFFFFFF</tt><br><tt>0xFFFFFF8000000000</tt></td>
+      <td align="center">CPU Stacks/Metadata</td>
+      <td align="center"><tt>0xFFFFFFFFFFFFFFFF</tt><br><tt>...</tt></td>
       <td>1MB stack + 1MB Meta per CPU core</td>
     </tr>
     <tr>
-      <td style="text-align: center;">512GB Page Aggregator</td>
-      <td style="text-align: center;"><tt>0xFFFFFFE000203000</tt><br><tt>0xFFFFFFE000202000</tt></td>
+      <td align="center">512GB Page Aggregator</td>
+      <td align="center"><tt>0xFFFFFFE000203000</tt><br><tt>0xFFFFFFE000202000</tt></td>
       <td>512GB pages calculated for parity, but not used</td>
     </tr>
     <tr>
-      <td style="text-align: center;">1GB Page Stack</td>
-      <td style="text-align: center;"><tt>0xFFFFFFE000202000</tt><br><tt>0xFFFFFFE000201000</tt></td>
+      <td align="center">1GB Page Stack</td>
+      <td align="center"><tt>0xFFFFFFE000202000</tt><br><tt>0xFFFFFFE000201000</tt></td>
       <td></td>
     </tr>
     <tr>
-      <td style="text-align: center;">1GB Page Aggregator</td>
-      <td style="text-align: center;"><tt>0xFFFFFFE000201000</tt><br><tt>0xFFFFFFE000200000</tt></td>
+      <td align="center">1GB Page Aggregator</td>
+      <td align="center"><tt>0xFFFFFFE000201000</tt><br><tt>0xFFFFFFE000200000</tt></td>
       <td></td>
     </tr>
     <tr>
-      <td style="text-align: center;">2MB Page Stack</td>
-      <td style="text-align: center;"><tt>0xFFFFFFE000200000</tt><br><tt>0xFFFFFFE000000000</tt></td>
+      <td align="center">2MB Page Stack</td>
+      <td align="center"><tt>0xFFFFFFE000200000</tt><br><tt>0xFFFFFFE000000000</tt></td>
       <td></td>
     </tr>
     <tr>
-      <td style="text-align: center;">2MB Page Aggregator</td>
-      <td style="text-align: center;"><tt>0xFFFFFFD040100000</tt><br><tt>0xFFFFFFD040000000</tt></td>
+      <td align="center">2MB Page Aggregator</td>
+      <td align="center"><tt>0xFFFFFFD040100000</tt><br><tt>0xFFFFFFD040000000</tt></td>
       <td></td>
     </tr>
     <tr>
-      <td style="text-align: center;">4KB Page Stack</td>
-      <td style="text-align: center;"><tt>0xFFFFFFD040000000</tt><br><tt>0xFFFFFFD000000000</tt></td>
+      <td align="center">4KB Page Stack</td>
+      <td align="center"><tt>0xFFFFFFD040000000</tt><br><tt>0xFFFFFFD000000000</tt></td>
       <td></td>
     </tr>
     <tr>
-      <td style="text-align: center;">Kernel</td>
-      <td style="text-align: center;"><tt>0xFFFFFF800053C000</tt><br><tt>0xFFFFFF8000000000</tt></td>
+      <td align="center">Kernel</td>
+      <td align="center"><tt>0xFFFFFF800053C000</tt><br><tt>0xFFFFFF8000000000</tt></td>
       <td>~5MB (should be updated regularly)</td>
     </tr>
     <tr>
-      <td style="text-align: center;">510</td>
-      <td style="text-align: center;"><tt>0xFFFFFF7FFFFFFFFF</tt><br><tt>0xFFFFFF0000000000</tt></td>
-      <td style="text-align: center;">Physical Mirror</td>
-      <td align="center" style="text-align: center;">*</td>
+      <td align="center">510</td>
+      <td align="center"><tt>0xFFFFFF7FFFFFFFFF</tt><br><tt>0xFFFFFF0000000000</tt></td>
+      <td align="center">Physical Mirror</td>
+      <td align="center">*</td>
       <td>Kernel Stack also expands down from top, which overlaps mirror.  This needs to be fixed.</td>
     </tr>
   </tbody>
