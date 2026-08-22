@@ -179,9 +179,7 @@ unsafe extern "C" {
 
 macro_rules! relocate_jump {
     ($jump:ident, $new_base:ident) => {
-        let jump_offset = 
-            Self::get_offset(unsafe { &raw const $jump as *const _ as Address }) as u32
-            + 6; // jump past the offset + the selector
+        let jump_offset = Self::get_offset(&raw const $jump as *const _ as Address) as u32 + 6;
         $jump = $new_base as u32 + jump_offset;
     };
 }
@@ -222,12 +220,14 @@ impl Trampoline {
             relocate_jump!(protected_mode_entry_patch, address);
             relocate_jump!(long_mode_entry_patch, address);
 
-            let gdt_pointer_offset : u16 = 
-                Self::get_offset(unsafe { &gdt_pointer as *const _ as Address })
-                .try_into().expect("Offset should be within 16-bit real mode segment");
-            let gdt_start_offset : u16 = 
-                Self::get_offset(unsafe { &gdt_start as *const _ as Address })
-                .try_into().expect("Offset should be within 16-bit real mode segment");
+            let gdt_pointer_offset: u16 = 
+                Self::get_offset(&gdt_pointer as *const _ as Address)
+                    .try_into()
+                    .expect("Offset should be within 16-bit real mode segment");
+            let gdt_start_offset: u16 = 
+                Self::get_offset(&gdt_start as *const _ as Address)
+                    .try_into()
+                    .expect("Offset should be within 16-bit real mode segment");
             let relocated_gdt_start = 
                 gdt_start_offset as u32 + address as u32;
 

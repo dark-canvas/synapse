@@ -1,4 +1,4 @@
-use x2apic::lapic::{LocalApic, LocalApicBuilder, xapic_base};
+use x2apic::lapic::{LocalApicBuilder, xapic_base};
 use super::idt::InterruptIndex;
 use super::pager::physical_mirror;
 

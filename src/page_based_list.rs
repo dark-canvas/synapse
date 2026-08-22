@@ -45,6 +45,7 @@ use crate::errors::ErrCode;
 use core::mem;
 use core::ptr;
 
+#[allow(dead_code)]
 pub struct PageBasedList<T> {
     num_items: usize,
     head: Option<Address>,
@@ -52,12 +53,14 @@ pub struct PageBasedList<T> {
     _phantom: core::marker::PhantomData<T>,
 }
 
+#[allow(dead_code)]
 pub struct PageBasedIterator<'a, T> {
     current: Option<Address>,
     previous: Option<Address>,
     _phantom: core::marker::PhantomData<&'a T>,
 }
 
+#[allow(dead_code)]
 impl<T> PageBasedList<T> {
     pub fn new() -> Result<Self, ErrCode> {
         let pager = PAGER.borrow();
@@ -113,6 +116,7 @@ impl<T> PageBasedList<T> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn head(&self) -> Option<&T> {
         self.head.map(|addr| unsafe {
             let data_ptr = (addr + mem::size_of::<Address>() as u64) as *const T;
@@ -126,6 +130,7 @@ impl<T> PageBasedList<T> {
         })
     }
 
+    #[allow(dead_code)]
     pub fn iter(&self) -> PageBasedIterator<'_, T> {
         PageBasedIterator {
             current: self.head,
@@ -134,6 +139,7 @@ impl<T> PageBasedList<T> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn remove(&mut self, loc: &PageBasedIterator<T>) -> Result<(), ErrCode> {
         let current = match loc.current {
             Some(addr) => addr,
@@ -181,6 +187,7 @@ impl<T> PageBasedList<T> {
     }
 }
 
+#[allow(dead_code)]
 impl<'a, T> PageBasedIterator<'a, T> {
     pub fn next(&mut self) -> Result<Option<&'a T>, ErrCode> {
         match self.current {

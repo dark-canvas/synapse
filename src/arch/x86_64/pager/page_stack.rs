@@ -79,12 +79,10 @@ use mockall::predicate::*;
 
 use crate::stack::{Stack, SimpleStack, EXPAND_UP};
 use crate::types::Address;
-use super::PageIterator;
 
 use super::address_aggregator::{AddressAggregator, PageAggregator};
 use super::VirtualAddress;
 use super::PAGE_SIZE_1GB;
-use super::PAGE_SIZE_4KB;
 pub const ADDRESSES_PER_PAGE: usize = 512; // make this a const in pager?
 
 #[derive(PartialEq, PartialOrd)]
@@ -191,7 +189,7 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
         let mut result = None;
         if PAGE_SIZE != PAGE_SIZE_1GB {
-            result = match(new_addr) {
+            result = match new_addr {
                 true  => self.aggregate_map.mark_available(page_addr),
                 false => self.aggregate_map.deallocate(page_addr),
             };
@@ -254,7 +252,7 @@ mod tests {
     use std::vec;
     use std::vec::Vec;
     use std::collections::HashSet;
-    use crate::arch::x86_64::pager::PAGE_SIZE_2MB;
+    use crate::arch::x86_64::pager::{PAGE_SIZE_2MB, PAGE_SIZE_4KB};
     use crate::arch::x86_64::pager::address_aggregator::PageBucket;
 
     #[test]
@@ -264,9 +262,9 @@ mod tests {
 
         let addresses = vec![ 0x3000 as Address, 0x4000, 0x5000 ];
 
-        let ps = PageStack::<4096>::new(
-            address_stack.as_ptr() as Address, 
-            10 * ADDRESSES_PER_PAGE, 
+        let _ps = PageStack::<4096>::new(
+            address_stack.as_ptr() as Address,
+            10 * ADDRESSES_PER_PAGE,
             address_aggregator.as_ptr() as Address,
             addresses.iter().copied());
 
@@ -279,7 +277,7 @@ mod tests {
     #[test]
     fn test_allocate_page() {
         let address_stack = [0 as Address; 10];
-        let mut address_aggregator = [PageBucket{allocated: 0, available: 0}; 4096];
+        let address_aggregator = [PageBucket{allocated: 0, available: 0}; 4096];
 
         let address1 = 0x1234000 as Address;
         let address2 = 0x5678000 as Address;
@@ -359,6 +357,7 @@ mod tests {
 
         address_aggregator[base_address as usize / PAGE_SIZE_2MB].allocated = 0;
         address_aggregator[base_address as usize / PAGE_SIZE_2MB].available = 512;
+        let _ = address_aggregator[base_address as usize / PAGE_SIZE_2MB].available;
 
         // we expect the stack to be constructed with all the addresses...
         assert_eq!(address_stack[0], base_address);
@@ -401,8 +400,10 @@ mod tests {
 
         address_aggregator[base_address_aggregate_page as usize / PAGE_SIZE_2MB].allocated = 0;
         address_aggregator[base_address_aggregate_page as usize / PAGE_SIZE_2MB].available = 512;
+        let _ = address_aggregator[base_address_aggregate_page as usize / PAGE_SIZE_2MB].available;
         address_aggregator[base_address_other_page as usize / PAGE_SIZE_2MB].allocated = 0;
         address_aggregator[base_address_other_page as usize / PAGE_SIZE_2MB].available = 512;
+        let _ = address_aggregator[base_address_other_page as usize / PAGE_SIZE_2MB].available;
 
         // we expect the stack to be constructed with all the addresses...
         assert_eq!(ps.len(), addresses.len());
