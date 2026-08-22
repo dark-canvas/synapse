@@ -1,12 +1,5 @@
-use core::arch::asm;
-use x86_64::structures::idt::InterruptStackFrame;
-use x86_64::structures::idt::InterruptDescriptorTable;
-use x86_64::structures::idt::HandlerFunc;
-use x86_64::structures::idt::PageFaultErrorCode;
+use x86_64::structures::idt::{InterruptStackFrame, PageFaultErrorCode};
 use crate::get_register_snapshot;
-use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
-
-use crate::KERNEL_START;
 
 pub trait InterruptMetaData {
     const INTERRUPT_NUMBER: u8;

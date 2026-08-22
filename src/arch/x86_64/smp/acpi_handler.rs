@@ -31,26 +31,26 @@ impl Handler for SynapseAcpiHandler {
     }
 
     // Hardware I/O Methods (Safe to stub out if only parsing tables) ----
-    fn read_u8(&self, address: usize) -> u8 { unimplemented!() }
-    fn read_u16(&self, address: usize) -> u16 { unimplemented!() }
-    fn read_u32(&self, address: usize) -> u32 { unimplemented!() }
-    fn read_u64(&self, address: usize) -> u64 { unimplemented!() }
-    fn write_u8(&self, address: usize, value: u8) { unimplemented!() }
-    fn write_u16(&self, address: usize, value: u16) { unimplemented!() }
-    fn write_u32(&self, address: usize, value: u32) { unimplemented!() }
-    fn write_u64(&self, address: usize, value: u64) { unimplemented!() }
-    fn read_io_u8(&self, port: u16) -> u8 { unimplemented!() }
-    fn read_io_u16(&self, port: u16) -> u16 { unimplemented!() }
-    fn read_io_u32(&self, port: u16) -> u32 { unimplemented!() }
-    fn write_io_u8(&self, port: u16, value: u8) { unimplemented!() }
-    fn write_io_u16(&self, port: u16, value: u16) { unimplemented!() }
-    fn write_io_u32(&self, port: u16, value: u32) { unimplemented!() }
-    fn read_pci_u8(&self, address: PciAddress, offset: u16) -> u8 { unimplemented!() }
-    fn read_pci_u16(&self, address: PciAddress, offset: u16) -> u16 { unimplemented!() }
-    fn read_pci_u32(&self, address: PciAddress, offset: u16) -> u32 { unimplemented!() }
-    fn write_pci_u8(&self, address: PciAddress, offset: u16, value: u8) { unimplemented!() }
-    fn write_pci_u16(&self, address: PciAddress, offset: u16, value: u16) { unimplemented!() }
-    fn write_pci_u32(&self, address: PciAddress, offset: u16, value: u32) { unimplemented!() }
+    fn read_u8(&self, _address: usize) -> u8 { unimplemented!() }
+    fn read_u16(&self, _address: usize) -> u16 { unimplemented!() }
+    fn read_u32(&self, _address: usize) -> u32 { unimplemented!() }
+    fn read_u64(&self, _address: usize) -> u64 { unimplemented!() }
+    fn write_u8(&self, _address: usize, _value: u8) { unimplemented!() }
+    fn write_u16(&self, _address: usize, _value: u16) { unimplemented!() }
+    fn write_u32(&self, _address: usize, _value: u32) { unimplemented!() }
+    fn write_u64(&self, _address: usize, _value: u64) { unimplemented!() }
+    fn read_io_u8(&self, _port: u16) -> u8 { unimplemented!() }
+    fn read_io_u16(&self, _port: u16) -> u16 { unimplemented!() }
+    fn read_io_u32(&self, _port: u16) -> u32 { unimplemented!() }
+    fn write_io_u8(&self, _port: u16, _value: u8) { unimplemented!() }
+    fn write_io_u16(&self, _port: u16, _value: u16) { unimplemented!() }
+    fn write_io_u32(&self, _port: u16, _value: u32) { unimplemented!() }
+    fn read_pci_u8(&self, _address: PciAddress, _offset: u16) -> u8 { unimplemented!() }
+    fn read_pci_u16(&self, _address: PciAddress, _offset: u16) -> u16 { unimplemented!() }
+    fn read_pci_u32(&self, _address: PciAddress, _offset: u16) -> u32 { unimplemented!() }
+    fn write_pci_u8(&self, _address: PciAddress, _offset: u16, _value: u8) { unimplemented!() }
+    fn write_pci_u16(&self, _address: PciAddress, _offset: u16, _value: u16) { unimplemented!() }
+    fn write_pci_u32(&self, _address: PciAddress, _offset: u16, _value: u32) { unimplemented!() }
     fn nanos_since_boot(&self) -> u64 { 0 } // obvoiusly not accurate
     fn stall(&self, microseconds: u64) {
         self.sleep(microseconds)

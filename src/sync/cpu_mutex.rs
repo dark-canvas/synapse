@@ -1,26 +1,29 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::ops::Drop;
-use crate::types::CpuId;
 use crate::errors::ErrCode;
 use crate::arch::x86_64::smp::cpu_state; // need a better way to do this across arch!  Think of a design!
 
+#[allow(dead_code)]
 const UNLOCKED : u32 = 0;
 
+#[allow(dead_code)]
 struct CpuMutex {
     owner: AtomicU32,
     poisoned: bool,
 }
 
+#[allow(dead_code)]
 struct CpuMutexGuard<'a> {
     mutex: &'a mut CpuMutex,
 }
 
 impl<'a> Drop for CpuMutexGuard<'a> {
     fn drop(&mut self) {
-        self.mutex.Unlock();
+        self.mutex.unlock();
     }
 }
 
+#[allow(dead_code)]
 impl<'a> CpuMutexGuard<'a> {
     fn new(mutex: &'a mut CpuMutex) -> CpuMutexGuard<'a> {
         CpuMutexGuard{
@@ -29,6 +32,7 @@ impl<'a> CpuMutexGuard<'a> {
     }
 }
 
+#[allow(dead_code)]
 impl CpuMutex {
     pub fn new() -> Self {
         Self {
@@ -41,7 +45,7 @@ impl CpuMutex {
         cpu_state::get_cpu_id().unwrap() as u32 + 1 // CpuId == 0 is valid, but == UNLOCKED, so we can't use it
     }
 
-    pub fn Lock(&mut self) -> Result< CpuMutexGuard, ErrCode > {
+    pub fn lock(&mut self) -> Result<CpuMutexGuard<'_>, ErrCode> {
         let lock_value = Self::get_lock_value();
         loop {
             match self.owner.compare_exchange(
@@ -51,25 +55,22 @@ impl CpuMutex {
                 Ordering::Relaxed) {
             
                 Ok(_) => return Ok( CpuMutexGuard::new(self) ),
-                Err(cpu) => continue, // lock is owned by `cpu` now
+                Err(_cpu) => continue, // lock is owned by `cpu` now
             
             }
-            core::hint::spin_loop();
         }
-
-        Err(ErrCode::Unknown)
     }
 
-    pub fn Unlock(&mut self) {
+    pub fn unlock(&mut self) {
         match self.owner.compare_exchange(
             Self::get_lock_value(),
             UNLOCKED,
             Ordering::Acquire,
             Ordering::Relaxed) {
-        
+
             Ok(_) => return,
-            Err(cpu) => self.poisoned = true, // lock is poisoned!!!
-        
+            Err(_cpu) => self.poisoned = true, // lock is poisoned!!!
+
         }
     }
 }

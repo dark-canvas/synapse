@@ -4,6 +4,9 @@
 #![feature(core_intrinsics)]
 //#![feature(return_address)]
 #![feature(generic_const_exprs)]
+#![allow(incomplete_features)]
+#![allow(internal_features)]
+#![allow(unused_features)]
 
 #[cfg(test)]
 extern crate std;
@@ -30,7 +33,6 @@ use satus_struct::config::Config;
 use satus_struct::module_list::ModuleList;
 
 const KERNEL_START: u64 = 0xFFFFFF8000000000;
-const KERNEL_STACK_SIZE: u64 = 2*1024*1024; // This is completely arbitraty...
 
 #[cfg(not(test))]
 #[panic_handler]

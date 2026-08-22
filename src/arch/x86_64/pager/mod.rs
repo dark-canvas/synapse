@@ -61,16 +61,11 @@ use satus_struct::memory_map::{MemoryMap, MemoryRegionType};
 use crate::errors::ErrCode;
 use crate::pager::PagerError;
 
-use crate::KERNEL_START;
-use crate::KERNEL_STACK_SIZE;
 
 use crate::pager::Pager as PagerInterface;
 use crate::types::Address;
-use crate::stack::SimpleStack;
 use crate::logger::FrameBufferLogger;
 use crate::logger::LOG_ALLOC_4KB;
-use crate::logger::LOG_ALLOC_2MB;
-use crate::logger::LOG_ALLOC_1GB;
 use crate::logger::LOG_FREE_4KB;
 use crate::logger::LOG_FREE_2MB;
 use crate::logger::LOG_FREE_1GB;
@@ -142,6 +137,7 @@ pub enum PageType {
     Page1GB,
 }
 
+#[allow(dead_code)]
 #[derive(PartialEq, Copy, Clone)]
 pub enum SizedPage {
     Page4KB(Address),
@@ -205,7 +201,6 @@ pub fn get_entry(virtual_addr: VirtualAddress) -> Option<&'static mut PageTableE
     let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
     let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
 
-    unsafe {
         let pl4_table = get_pl4_table();
 
         let pl4_entry = &mut pl4_table[pl4_index];
@@ -242,7 +237,6 @@ pub fn get_entry(virtual_addr: VirtualAddress) -> Option<&'static mut PageTableE
         }
 
         Some(pl1_entry)
-    }
 }
 
 
@@ -425,7 +419,6 @@ impl Pager {
     /// embedded pointers)
     pub fn new(config: &Config) -> Self {
         let (pl4_frame, _flags) = Cr3::read();
-        let pl4_addr: PhysAddr = pl4_frame.start_address();
 
         let (width, height) = config.get_framebuffer_dimensions();
         let fb_logger = FrameBufferLogger::new(
@@ -650,11 +643,12 @@ impl Pager {
         let mut stack_1gb = self.stack_1gb.lock();
 
         if stack_1gb.0.top() >= stack_1gb.1 {
-            self.map_physical_to_virtual( 
-                PhysicalAddress(self.stack_4kb.lock().0.allocate_page().unwrap()), 
-                VirtualAddress(stack_1gb.1), 
-                PageType::Page4KB, 
-                PageTableFlags::GLOBAL | PageTableFlags::WRITABLE);
+            let _ = self.map_physical_to_virtual(
+                PhysicalAddress(self.stack_4kb.lock().0.allocate_page().unwrap()),
+                VirtualAddress(stack_1gb.1),
+                PageType::Page4KB,
+                PageTableFlags::GLOBAL | PageTableFlags::WRITABLE,
+            );
             stack_1gb.1 += PAGE_SIZE_4KB as Address;
         }
 
@@ -666,11 +660,12 @@ impl Pager {
         let mut stack_2mb = self.stack_2mb.lock();
 
         if stack_2mb.0.top() >= stack_2mb.1 {
-            self.map_physical_to_virtual( 
-                PhysicalAddress(self.stack_4kb.lock().0.allocate_page().unwrap()), 
-                VirtualAddress(stack_2mb.1), 
-                PageType::Page4KB, 
-                PageTableFlags::GLOBAL | PageTableFlags::WRITABLE);
+            let _ = self.map_physical_to_virtual(
+                PhysicalAddress(self.stack_4kb.lock().0.allocate_page().unwrap()),
+                VirtualAddress(stack_2mb.1),
+                PageType::Page4KB,
+                PageTableFlags::GLOBAL | PageTableFlags::WRITABLE,
+            );
             stack_2mb.1 += PAGE_SIZE_4KB as Address;
         }
 
@@ -692,22 +687,20 @@ impl Pager {
         let mut stack_4kb = self.stack_4kb.lock();
 
         if stack_4kb.0.top() >= stack_4kb.1 {
-            Self::_map_physical_to_virtual(
-                PhysicalAddress(stack_4kb.0.allocate_page().unwrap()), 
-                VirtualAddress(stack_4kb.1), 
-                PageType::Page4KB, 
-                PageTableFlags::GLOBAL | PageTableFlags::WRITABLE, 
+            let _ = Self::_map_physical_to_virtual(
+                PhysicalAddress(stack_4kb.0.allocate_page().unwrap()),
+                VirtualAddress(stack_4kb.1),
+                PageType::Page4KB,
+                PageTableFlags::GLOBAL | PageTableFlags::WRITABLE,
                 &mut || {
                     // we're already holding the 4kb page stack lock...
-                    stack_4kb.0.allocate_page().map(
-                        |addr| {
-                            unsafe {  
-                                core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
-                                PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
-                            }
+                    stack_4kb.0.allocate_page().map(|addr| {
+                        unsafe {
+                            core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
+                            PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
                         }
-                    )
-                }
+                    })
+                },
             );
             stack_4kb.1 += PAGE_SIZE_4KB as Address;
         }
@@ -735,7 +728,6 @@ impl Pager {
         let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
         let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
 
-        unsafe {
             let pl4_table = get_pl4_table();
 
             let pl4_entry = &pl4_table[pl4_index];
@@ -772,7 +764,6 @@ impl Pager {
             }
 
             Some(PhysicalAddress(pl1_entry.addr().as_u64() + (virtual_addr.0 & 0xFFF)))
-        }
     }
 
     pub fn map_physical_to_virtual(
@@ -813,7 +804,6 @@ impl Pager {
 
         println!("Mapping physical address {:x} to virtual address {:x} with flags {:?}", phys_addr, virtual_addr, flags);
 
-        unsafe {
             let pl4_table = get_pl4_table();
 
             let pl4_entry = &mut pl4_table[pl4_index];
@@ -860,7 +850,6 @@ impl Pager {
 
             // For simplicity, we only support mapping a single page here. In a real implementation, you'd want to handle larger mappings.
             pl1_entry.set_addr(PhysAddr::new(phys_addr as u64), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
-        }
 
         Ok(())
     }
@@ -873,7 +862,6 @@ impl Pager {
         let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
         let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
         
-        unsafe {
             let pl4_entry = &mut pl4_table[pl4_index];
             if pl4_entry.is_unused() {
                 let new_frame = self.allocate_page_table().ok_or("Couldn't create page table")?;
@@ -925,7 +913,6 @@ impl Pager {
             pl1_entry.set_addr(PhysAddr::new(self.allocate_4kb_page().ok_or("Couldn't allocate 4KB page")? as u64), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
 
             Ok(true)
-        }
     }
     
     pub fn show_address_debug(&self, virtual_addr: VirtualAddress) {
@@ -939,7 +926,6 @@ impl Pager {
         println!("Address {:#x} indices:", virtual_addr.0);
         println!("  {} {} {} {}", pl4_index, pl3_index, pl2_index, pl1_index);
         
-        unsafe {
             let pl4_entry = &mut pl4_table[pl4_index];
             if pl4_entry.is_unused() {
                 println!("  no p4 entry");
@@ -974,7 +960,6 @@ impl Pager {
             }
 
             println!("  pl1 entry {:?}", pl1_entry);
-        }
     }
 }
 
@@ -1072,9 +1057,9 @@ impl PagerInterface for Pager {
         self.free_4kb_page(addr.0);
         Ok(())
     }
-    fn allocate_virtual(&self, num: usize, to_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode> { Err(ErrCode::Unimplemented) }
-    fn free_virtual(&self, num: usize, base_addr: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
-    fn map_physical_to_virtual(&self, phys: PhysicalAddress, virt: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn allocate_virtual(&self, _num: usize, _to_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode> { Err(ErrCode::Unimplemented) }
+    fn free_virtual(&self, _num: usize, _base_addr: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn map_physical_to_virtual(&self, _phys: PhysicalAddress, _virt: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
     fn get_virtual_address(&self, addr: PhysicalAddress) -> Result<VirtualAddress, ErrCode> { 
         Ok(VirtualAddress(addr.0 + PHYSICAL_OFFSET))
     }
@@ -1085,6 +1070,7 @@ impl PagerInterface for Pager {
     }
 }
 
+#[allow(dead_code)]
 fn breakpoint() {
     println!("Artificial breakpoint");
     loop {
