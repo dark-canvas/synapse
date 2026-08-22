@@ -137,6 +137,6 @@ pub fn _print(args: fmt::Arguments) {
 
 #[cfg(test)]
 #[doc(hidden)]
-pub fn _print(args: fmt::Arguments) {
+pub fn _print(_args: fmt::Arguments) {
     // Nothing for now...
 }
