@@ -69,7 +69,7 @@ Each index into the PLM4 table references a 512GB block of memory.
       <td style="text-align: center;">510</td>
       <td style="text-align: center;"><tt>0xFFFFFF7FFFFFFFFF</tt><br><tt>0xFFFFFF0000000000</tt></td>
       <td style="text-align: center;">Physical Mirror</td>
-      <td style="text-align: center;">*</td>
+      <td align="center" style="text-align: center;">*</td>
       <td>Kernel Stack also expands down from top, which overlaps mirror.  This needs to be fixed.</td>
     </tr>
   </tbody>
