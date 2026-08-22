@@ -11,7 +11,6 @@ use core::pin::Pin;
 use core::slice;
 use core::ptr::{read_volatile, write_volatile};
 use core::time::Duration;
-use super::pager::get_kernel_cr3;
 use crate::Address;
 use crate::arch::x86_64::pager::PHYSICAL_OFFSET;
 use crate::arch::x86_64::pager::set_mmio;
@@ -76,16 +75,18 @@ pub fn init(cpu_config: &mut CpuConfig) {
 
     // Create our trampoline to take the APs from real mode to long mode
     let trampoline = Trampoline::new(
-        cpu_config.trampoline_address, 
-        get_cr3(), 
-        kernel_ap_entry as Address);
-    
+        cpu_config.trampoline_address,
+        get_cr3(),
+        kernel_ap_entry as *const () as Address,
+    );
+
     // And identity map it (it must be within the 1st MB such that it's reachable in 16-bit real mode)
-    X86_PAGER.get().unwrap().map_physical_to_virtual( 
+    let _ = X86_PAGER.get().unwrap().map_physical_to_virtual(
         PhysicalAddress(cpu_config.trampoline_address),
-        VirtualAddress(cpu_config.trampoline_address), 
+        VirtualAddress(cpu_config.trampoline_address),
         PageType::Page4KB,
-        PageTableFlags::WRITABLE);
+        PageTableFlags::WRITABLE,
+    );
 
     let per_cpu_config = unsafe {
         slice::from_raw_parts_mut(

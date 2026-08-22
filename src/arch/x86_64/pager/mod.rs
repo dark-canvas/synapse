@@ -137,6 +137,7 @@ pub enum PageType {
     Page1GB,
 }
 
+#[allow(dead_code)]
 #[derive(PartialEq, Copy, Clone)]
 pub enum SizedPage {
     Page4KB(Address),
@@ -642,11 +643,12 @@ impl Pager {
         let mut stack_1gb = self.stack_1gb.lock();
 
         if stack_1gb.0.top() >= stack_1gb.1 {
-            self.map_physical_to_virtual( 
-                PhysicalAddress(self.stack_4kb.lock().0.allocate_page().unwrap()), 
-                VirtualAddress(stack_1gb.1), 
-                PageType::Page4KB, 
-                PageTableFlags::GLOBAL | PageTableFlags::WRITABLE);
+            let _ = self.map_physical_to_virtual(
+                PhysicalAddress(self.stack_4kb.lock().0.allocate_page().unwrap()),
+                VirtualAddress(stack_1gb.1),
+                PageType::Page4KB,
+                PageTableFlags::GLOBAL | PageTableFlags::WRITABLE,
+            );
             stack_1gb.1 += PAGE_SIZE_4KB as Address;
         }
 
@@ -658,11 +660,12 @@ impl Pager {
         let mut stack_2mb = self.stack_2mb.lock();
 
         if stack_2mb.0.top() >= stack_2mb.1 {
-            self.map_physical_to_virtual( 
-                PhysicalAddress(self.stack_4kb.lock().0.allocate_page().unwrap()), 
-                VirtualAddress(stack_2mb.1), 
-                PageType::Page4KB, 
-                PageTableFlags::GLOBAL | PageTableFlags::WRITABLE);
+            let _ = self.map_physical_to_virtual(
+                PhysicalAddress(self.stack_4kb.lock().0.allocate_page().unwrap()),
+                VirtualAddress(stack_2mb.1),
+                PageType::Page4KB,
+                PageTableFlags::GLOBAL | PageTableFlags::WRITABLE,
+            );
             stack_2mb.1 += PAGE_SIZE_4KB as Address;
         }
 
@@ -684,22 +687,20 @@ impl Pager {
         let mut stack_4kb = self.stack_4kb.lock();
 
         if stack_4kb.0.top() >= stack_4kb.1 {
-            Self::_map_physical_to_virtual(
-                PhysicalAddress(stack_4kb.0.allocate_page().unwrap()), 
-                VirtualAddress(stack_4kb.1), 
-                PageType::Page4KB, 
-                PageTableFlags::GLOBAL | PageTableFlags::WRITABLE, 
+            let _ = Self::_map_physical_to_virtual(
+                PhysicalAddress(stack_4kb.0.allocate_page().unwrap()),
+                VirtualAddress(stack_4kb.1),
+                PageType::Page4KB,
+                PageTableFlags::GLOBAL | PageTableFlags::WRITABLE,
                 &mut || {
                     // we're already holding the 4kb page stack lock...
-                    stack_4kb.0.allocate_page().map(
-                        |addr| {
-                            unsafe {  
-                                core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
-                                PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
-                            }
+                    stack_4kb.0.allocate_page().map(|addr| {
+                        unsafe {
+                            core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
+                            PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
                         }
-                    )
-                }
+                    })
+                },
             );
             stack_4kb.1 += PAGE_SIZE_4KB as Address;
         }
@@ -1069,6 +1070,7 @@ impl PagerInterface for Pager {
     }
 }
 
+#[allow(dead_code)]
 fn breakpoint() {
     println!("Artificial breakpoint");
     loop {

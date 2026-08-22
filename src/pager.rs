@@ -3,6 +3,7 @@ use thiserror::Error;
 use crate::errors::ErrCode;
 use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
 
+#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum PagerError {
     #[error("physical address not found")]
@@ -20,6 +21,7 @@ pub enum PagerError {
 // Consider:
 // - Returns physical, or virtual, or both?
 // - Exposes mapping routines?
+#[allow(dead_code)]
 pub trait Pager: Sync {
     fn get_page_size(&self) -> usize;
     

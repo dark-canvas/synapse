@@ -4,7 +4,6 @@ use self::task::Task;
 use self::task::TaskList;
 use super::pager::VirtualAddress;
 use super::pager::get_kernel_cr3;
-use crate::Address;
 use crate::errors::ErrCode;
 use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
 
@@ -145,6 +144,7 @@ pub struct Scheduler {
     tasks: TaskList 
 }
 
+#[allow(dead_code)]
 impl Scheduler {
     pub fn init() {
         // create a new scheduler per each CPU

@@ -5,6 +5,7 @@ use crate::Address;
 use crate::arch::x86_64::scheduler::VirtualAddress;
 
 // Must be, at most, 4096 - 8 to fit into page-based-list
+#[allow(dead_code)]
 pub struct Task {
     pub registers: RegisterSnapshot,
     pub rip: u64,
@@ -26,6 +27,7 @@ pub struct Task {
 
 pub type TaskList = PageBasedList<Task>;
 
+#[allow(dead_code)]
 impl Task {
     pub fn new_kernel_task(entry: Address, stack: VirtualAddress, stack_size: usize) -> Self {
         // REVISIT: this wouldn't have to be mut with rip and rflags were separate from registers..?

@@ -7,6 +7,7 @@ use num_traits::PrimInt;
 
 // TODO: implemenent and use something like ConfigPage in satus?
 
+#[allow(dead_code)]
 #[derive(Default)]
 pub enum State {
     #[default] Off,
@@ -41,6 +42,7 @@ impl CpuState {
 }
 
 // TODO: modify read (movq) based on size of T?
+#[allow(dead_code)]
 unsafe fn get_cpu_state_at_offset<T: PrimInt>(offset: usize) -> T {
     let mut val: u64;
     unsafe {
@@ -55,6 +57,7 @@ unsafe fn get_cpu_state_at_offset<T: PrimInt>(offset: usize) -> T {
 }
     
 // TODO: proper error codes for this... (return err if SMP not initialized?)
+#[allow(dead_code)]
 pub fn get_cpu_id() -> Result<CpuId, ErrCode> {
     Ok( unsafe { get_cpu_state_at_offset::<u8>(0) } as CpuId )
 }

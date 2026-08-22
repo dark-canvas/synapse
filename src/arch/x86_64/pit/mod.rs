@@ -15,29 +15,47 @@ use x86_64::structures::idt::InterruptStackFrame;
 use x86_64::registers::model_specific::Msr;
 
 // Port delcarations
+#[allow(dead_code)]
 const TIMER0_CNTR: u16 = 0x40;
+#[allow(dead_code)]
 const TIMER1_CNTR: u16 = 0x41;
+#[allow(dead_code)]
 const TIMER2_CNTR: u16 = 0x42;
+#[allow(dead_code)]
 const TIMER_CTRL: u16 = 0x43;
 
 // for use with TIMER_CTRL port
+#[allow(dead_code)]
 const TIMER0: u8 = 0 << 6;
+#[allow(dead_code)]
 const TIMER1: u8 = 1 << 6;
+#[allow(dead_code)]
 const TIMER2: u8 = 2 << 6;
 
+#[allow(dead_code)]
 const TIMER_LATCH: u8 = 0 << 4;
+#[allow(dead_code)]
 const TIMER_LSB: u8 = 1 << 4;
+#[allow(dead_code)]
 const TIMER_MSB: u8 = 2 << 4;
+#[allow(dead_code)]
 const TIMER_WHOLE: u8 = TIMER_LSB | TIMER_MSB;
 
+#[allow(dead_code)]
 const TIMER_MODE0: u8 = 0 << 1;
+#[allow(dead_code)]
 const TIMER_MODE1: u8 = 1 << 1;
+#[allow(dead_code)]
 const TIMER_MODE2: u8 = 2 << 1;
+#[allow(dead_code)]
 const TIMER_MODE3: u8 = 3 << 1;
+#[allow(dead_code)]
 const TIMER_MODE4: u8 = 4 << 1;
+#[allow(dead_code)]
 const TIMER_MODE5: u8 = 5 << 1;
 
 const TIMER_BIN16: u8 = 0;
+#[allow(dead_code)]
 const TIMER_BCD: u8 = 1;
 
 const PIT_FREQ: u32 = 0x1234DD;

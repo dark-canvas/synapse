@@ -4,6 +4,9 @@
 #![feature(core_intrinsics)]
 //#![feature(return_address)]
 #![feature(generic_const_exprs)]
+#![allow(incomplete_features)]
+#![allow(internal_features)]
+#![allow(unused_features)]
 
 #[cfg(test)]
 extern crate std;

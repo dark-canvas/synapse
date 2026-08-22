@@ -5,6 +5,7 @@ use crate::pager::PAGER;
 
 // TODO: return Result
 // TODO: ensure sizeof<T> is < PAGE_SIZE
+#[allow(dead_code)]
 pub fn new<T: Default>() -> &'static mut T {
     let pager = PAGER.borrow();
     let phys_address = pager.allocate_physical().unwrap();
@@ -14,8 +15,10 @@ pub fn new<T: Default>() -> &'static mut T {
     result
 }
 
+#[allow(dead_code)]
+#[allow(dead_code)]
 pub fn delete<T: Default>(page: &T) {
     let pager = PAGER.borrow();
     let page_ptr = page as *const T as Address;
-    pager.free_virtual(1, VirtualAddress(page_ptr));
+    let _ = pager.free_virtual(1, VirtualAddress(page_ptr));
 }

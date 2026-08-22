@@ -53,6 +53,7 @@ struct RingSelectors {
 
 struct Selectors {
     ring0: RingSelectors,
+    #[allow(dead_code)]
     ring3: RingSelectors,
     tss_selector: SegmentSelector,
 }
