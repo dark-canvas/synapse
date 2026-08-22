@@ -62,7 +62,7 @@ Each index into the PLM4 table references a 512GB block of memory.
     </tr>
     <tr>
       <td style="text-align: center;">Kernel</td>
-      <td style="text-align: center;"><tt>0xFFFFFF800053C000 <br>0xFFFFFF8000000000</tt></td>
+      <td style="text-align: center;"><tt>0xFFFFFF800053C000<br>0xFFFFFF8000000000</tt></td>
       <td>~5MB (should be updated regularly)</td>
     </tr>
     <tr>
