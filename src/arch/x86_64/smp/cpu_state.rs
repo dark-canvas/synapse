@@ -1,6 +1,7 @@
 use crate::page_based;
 use crate::types::CpuId;
 use crate::errors::ErrCode;
+use super::per_cpu_data;
 use core::default::Default;
 use core::arch::asm;
 use num_traits::PrimInt;
@@ -8,7 +9,7 @@ use num_traits::PrimInt;
 // TODO: implemenent and use something like ConfigPage in satus?
 
 #[allow(dead_code)]
-#[derive(Default)]
+#[derive(Default, PartialEq, Clone, Copy)]
 pub enum State {
     #[default] Off,
     Initializing,
@@ -18,13 +19,18 @@ pub enum State {
 #[repr(C)]
 #[derive(Default)]
 pub struct CpuState {
-    pub apic_id: u8,
+    pub apic_id: u8, // TODO: CpuId (but stored as a u8)
     pub state: State,
 }
 
 impl CpuState {
-    pub fn new() -> &'static mut CpuState {
-        page_based::allocator::new::<CpuState>()
+    pub fn new(id: CpuId) -> &'static mut CpuState {
+        page_based::allocator::new_at::<CpuState>( per_cpu_data::get_cpu_state_base(id) )
+    }
+
+    pub fn get(id: CpuId) -> &'static mut CpuState {
+        let base_address = per_cpu_data::get_cpu_state_base(id);
+        unsafe { &mut *(base_address.0 as *mut CpuState) }
     }
 
     // TODO: pick a standard form for inline assembly (AT&T... look into the nostack, pure, readonly variables as well)
@@ -34,7 +40,7 @@ impl CpuState {
             asm!(
                 "rdgsbase {}",
                 out(reg) base_address,
-                options(nostack, pure, readonly)
+                options(nostack/*, pure, readonly*/)
             );
         }
         unsafe { &mut *(base_address as *mut CpuState) }

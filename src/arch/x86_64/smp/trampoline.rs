@@ -119,7 +119,8 @@ global_asm!(
     // setup the per-cpu state
     "cpu_state_patch:",
     "    movq $0x1122334455667788, %rdx",  // full 64-bit CpuState pointer needs to be split...
-    "    movl $0xc0000102, %ecx",          // IA32_GS_BASE
+    "    movl $0xc0000101, %ecx",          // IA32_GS_BASE (active gs base)
+    //"    movl $0xc0000102, %ecx",          // IA32_KERNEL_GS_BASE (inactive gs base)
     "    mov %edx, %eax",                  // lower 32-bits to eax
     "    shrq $32, %rdx",                  // uper 32-bits in edx
     "    wrmsr",

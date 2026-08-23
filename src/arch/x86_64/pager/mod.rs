@@ -45,6 +45,8 @@ pub mod address_aggregator;
 use spin::Mutex;
 use core::fmt::Write;
 use core::ops::Add;
+use core::ops::Sub;
+use core::ops::AddAssign;
 
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::Size4KiB;
@@ -109,9 +111,9 @@ const PAGE_AGGREGATOR_1GB_BASE: Address = 0xFFFFFFE000200000;
 const PAGE_AGGREGATOR_512GB_BASE: Address = 0xFFFFFFE000202000;
 
 // TODO: move these into the common pager space (not x86_64 specific)
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PhysicalAddress(pub Address);
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct VirtualAddress(pub Address);
 
 impl Add<usize> for VirtualAddress {
@@ -127,6 +129,34 @@ impl Add<usize> for PhysicalAddress {
 
     fn add(self, rhs: usize) -> Self::Output {
         PhysicalAddress(self.0 + rhs as Address)
+    }
+}
+
+impl AddAssign<usize> for VirtualAddress {
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 += rhs as Address;
+    }
+}
+
+impl AddAssign<usize> for PhysicalAddress {
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 += rhs as Address;
+    }
+}
+
+impl Sub<usize> for VirtualAddress {
+    type Output = VirtualAddress;
+
+    fn sub(self, rhs: usize) -> Self::Output {
+        VirtualAddress(self.0 - rhs as Address)
+    }
+}
+
+impl Sub<usize> for PhysicalAddress {
+    type Output = PhysicalAddress;
+
+    fn sub(self, rhs: usize) -> Self::Output {
+        PhysicalAddress(self.0 - rhs as Address)
     }
 }
 
@@ -1057,9 +1087,25 @@ impl PagerInterface for Pager {
         self.free_4kb_page(addr.0);
         Ok(())
     }
-    fn allocate_virtual(&self, _num: usize, _to_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode> { Err(ErrCode::Unimplemented) }
+    // TODO: move into page interface as a provided method
+    fn allocate_virtual(&self, num_pages: usize, base_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode> { 
+        let mut to_addr = base_addr;
+        for _ in 0..num_pages {
+            let phys_addr = self.allocate_physical()?;
+            PagerInterface::map_physical_to_virtual(self, phys_addr, to_addr)?;
+            to_addr += self.get_page_size();
+        }
+        Ok(base_addr)
+    }
     fn free_virtual(&self, _num: usize, _base_addr: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
-    fn map_physical_to_virtual(&self, _phys: PhysicalAddress, _virt: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn map_physical_to_virtual(&self, phys_addr: PhysicalAddress, virt_addr: VirtualAddress) -> Result<(), ErrCode> { 
+        self.map_physical_to_virtual(
+            phys_addr, 
+            virt_addr, 
+            PageType::Page4KB,
+            PageTableFlags::WRITABLE).map_err( |_| { ErrCode::Pager(PagerError::UnmappedVirtualAddress(virt_addr)) } ) ;
+        Ok(())
+    }
     fn get_virtual_address(&self, addr: PhysicalAddress) -> Result<VirtualAddress, ErrCode> { 
         Ok(VirtualAddress(addr.0 + PHYSICAL_OFFSET))
     }

@@ -16,6 +16,16 @@ pub fn new<T: Default>() -> &'static mut T {
 }
 
 #[allow(dead_code)]
+pub fn new_at<T: Default>(addr: VirtualAddress) -> &'static mut T {
+    let pager = PAGER.borrow();
+    let virt_address = pager.allocate_virtual(1, addr).unwrap();
+    let result : &'static mut T = unsafe { &mut *(virt_address.0 as *mut T) };
+
+    *result = T::default();
+    result
+}
+
+#[allow(dead_code)]
 #[allow(dead_code)]
 pub fn delete<T: Default>(page: &T) {
     let pager = PAGER.borrow();
