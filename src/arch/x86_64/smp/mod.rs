@@ -2,6 +2,8 @@ pub mod acpi_handler;
 pub mod trampoline;
 pub mod relocation;
 pub mod cpu_state;
+pub mod cpu_stack;
+pub mod per_cpu_data;
 
 use x86_64::registers::model_specific::ApicBaseFlags;
 use x86_64::structures::paging::PageTableFlags;
@@ -20,9 +22,13 @@ use crate::arch::x86_64::pager::PhysicalAddress;
 use crate::arch::x86_64::pager::VirtualAddress;
 use crate::arch::x86_64::pager::PageType;
 use crate::arch::x86_64::util::registers::get_cr3;
+use crate::types::CpuId;
 use self::acpi_handler::SynapseAcpiHandler;
 use self::trampoline::Trampoline;
+use self::cpu_state::State;
 use self::cpu_state::CpuState;
+use self::cpu_stack::CpuStack;
+
 
 pub fn kernel_ap_entry() {
     // Uncommenting this causes it to fail...
@@ -168,6 +174,20 @@ pub fn init(cpu_config: &mut CpuConfig) {
             }
         }
     }
+
+    let num_cpus = cpu_config.get_num_cpus();
+    let mut num_aps_up = 1;
+    while num_aps_up != num_cpus {
+        num_aps_up = 1;
+        for cpu in 1..num_cpus {
+            let state = CpuState::get(cpu.try_into().unwrap());
+
+            println!("Cpu {} state {}", cpu, state.state as u32);
+            if state.state == State::Initializing {
+                num_aps_up += 1;
+            }
+        }
+    }
 }
 
 unsafe fn startup_ap(
@@ -195,17 +215,16 @@ unsafe fn startup_ap(
     // stack; probably there needs to be a unified strategy so that the AP stacks are comparatively 
     // similar to the BSP stack
     // This is also providing the top of the stack which is technically wrong.
-    let stack_pointer = per_cpu_config.stack.as_ptr() as Address;
-    X86_PAGER.get().unwrap().show_address_debug(VirtualAddress(stack_pointer));
+    //let stack_pointer = per_cpu_config.stack.as_ptr() as Address;
+    //X86_PAGER.get().unwrap().show_address_debug(VirtualAddress(stack_pointer));
 
     // TODO: populate
-    let cpu_state = CpuState::new();
+    let cpu_id = apic_id as CpuId;
+    let cpu_state = CpuState::new(cpu_id);
+    let cpu_stack = CpuStack::new(cpu_id);
     cpu_state.apic_id = u8::try_from(apic_id).unwrap();
 
-    for byte in per_cpu_config.stack.iter_mut() {
-        *byte = 0x55;
-    }
-    trampoline.set_stack_pointer(stack_pointer);
+    trampoline.set_stack_pointer(cpu_stack.base.0); // TODO: accept the `cpu_stack` itself?
     trampoline.set_cpu_state(cpu_state);
 
     let (_, apic_flags) = x86_64::registers::model_specific::ApicBase::read();
