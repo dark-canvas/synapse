@@ -2,10 +2,12 @@ pub mod acpi_handler;
 pub mod trampoline;
 pub mod relocation;
 pub mod cpu_state;
+pub mod cpu_stack;
+pub mod per_cpu_data;
 
 use x86_64::registers::model_specific::ApicBaseFlags;
 use x86_64::structures::paging::PageTableFlags;
-use satus_struct::cpu_config::{CpuConfig, PerCpuConfig};
+use satus_struct::cpu_config::CpuConfig;
 use acpi::sdt::madt::{Madt, MadtEntry};
 use core::pin::Pin;
 use core::slice;
@@ -20,9 +22,13 @@ use crate::arch::x86_64::pager::PhysicalAddress;
 use crate::arch::x86_64::pager::VirtualAddress;
 use crate::arch::x86_64::pager::PageType;
 use crate::arch::x86_64::util::registers::get_cr3;
+use crate::types::CpuId;
 use self::acpi_handler::SynapseAcpiHandler;
 use self::trampoline::Trampoline;
+use self::cpu_state::State;
 use self::cpu_state::CpuState;
+use self::cpu_stack::CpuStack;
+
 
 pub fn kernel_ap_entry() {
     // Uncommenting this causes it to fail...
@@ -41,6 +47,22 @@ pub fn kernel_ap_entry() {
 // better idea of where the separation should be.
 pub fn init(cpu_config: &mut CpuConfig) {
     println!("Bootloader reports {} CPUs", cpu_config.get_num_cpus());
+
+    // allocate a CpuState for this CPU (the BSP)
+    // the APs will have theirs allocated and set in GS via the trampoline
+    let bspCpuState = CpuState::new(0);
+    bspCpuState.state = State::Initializing;
+    unsafe {
+        core::arch::asm!(
+            "movq {}, %rdx",             // full 64-bit CpuState pointer needs to be split...
+            "movl $0xc0000101, %ecx",    // IA32_GS_BASE (active gs base)
+            "mov %edx, %eax",            // lower 32-bits to eax
+            "shrq $32, %rdx",            // uper 32-bits in edx
+            "wrmsr",
+            in(reg) bspCpuState,
+            options(nostack, att_syntax)
+        );
+    }
 
     let handler = SynapseAcpiHandler{};
     let acpi_tables = unsafe { acpi::AcpiTables::from_rsdp(handler, cpu_config.rsdp_address as usize).unwrap() };
@@ -87,12 +109,6 @@ pub fn init(cpu_config: &mut CpuConfig) {
         PageType::Page4KB,
         PageTableFlags::WRITABLE,
     );
-
-    let per_cpu_config = unsafe {
-        slice::from_raw_parts_mut(
-           cpu_config.per_cpu_config as *mut PerCpuConfig, 
-            cpu_config.get_num_cpus() as usize)
-    };
 
     // Record apic_id per CPU
     for entry in madt.entries() {
@@ -163,8 +179,21 @@ pub fn init(cpu_config: &mut CpuConfig) {
                 startup_ap(
                     apic_id, 
                     lapic_physical_address + PHYSICAL_OFFSET, 
-                    &trampoline, 
-                    &mut per_cpu_config[cpu_index]);
+                    &trampoline);
+            }
+        }
+    }
+
+    let num_cpus = cpu_config.get_num_cpus();
+    let mut num_aps_up = 0;
+    while num_aps_up != num_cpus {
+        num_aps_up = 0;
+        for cpu in 0..num_cpus {
+            let state = CpuState::get(cpu.try_into().unwrap());
+
+            println!("Cpu {} state {}", cpu, state.state as u32);
+            if state.state == State::Initializing {
+                num_aps_up += 1;
             }
         }
     }
@@ -173,8 +202,7 @@ pub fn init(cpu_config: &mut CpuConfig) {
 unsafe fn startup_ap(
     apic_id: u32, 
     local_apic_base: Address,
-    trampoline: &Trampoline, 
-    per_cpu_config: &mut PerCpuConfig) {
+    trampoline: &Trampoline) {
 
     // Skip the first one because we're already running (BSP)
     // Trying to start the CPU we're already running on can/will cause a fault. 
@@ -195,17 +223,16 @@ unsafe fn startup_ap(
     // stack; probably there needs to be a unified strategy so that the AP stacks are comparatively 
     // similar to the BSP stack
     // This is also providing the top of the stack which is technically wrong.
-    let stack_pointer = per_cpu_config.stack.as_ptr() as Address;
-    X86_PAGER.get().unwrap().show_address_debug(VirtualAddress(stack_pointer));
+    //let stack_pointer = per_cpu_config.stack.as_ptr() as Address;
+    //X86_PAGER.get().unwrap().show_address_debug(VirtualAddress(stack_pointer));
 
     // TODO: populate
-    let cpu_state = CpuState::new();
+    let cpu_id = apic_id as CpuId;
+    let cpu_state = CpuState::new(cpu_id);
+    let cpu_stack = CpuStack::new(cpu_id);
     cpu_state.apic_id = u8::try_from(apic_id).unwrap();
 
-    for byte in per_cpu_config.stack.iter_mut() {
-        *byte = 0x55;
-    }
-    trampoline.set_stack_pointer(stack_pointer);
+    trampoline.set_stack_pointer(cpu_stack.base.0); // TODO: accept the `cpu_stack` itself?
     trampoline.set_cpu_state(cpu_state);
 
     let (_, apic_flags) = x86_64::registers::model_specific::ApicBase::read();
@@ -223,22 +250,19 @@ unsafe fn startup_ap(
         unsafe { startup_ap_x2apic(
             apic_id,
             local_apic_base,
-            trampoline, 
-            per_cpu_config); }
+            trampoline); }
     } else {
         unsafe { startup_ap_lapic(
             apic_id,
             local_apic_base,
-            trampoline, 
-            per_cpu_config); }
+            trampoline); }
     }
 }
 
 unsafe fn startup_ap_x2apic(
     apic_id: u32, 
     _local_apic_base: Address,
-    trampoline: &Trampoline, 
-    _per_cpu_config: &mut PerCpuConfig) {
+    trampoline: &Trampoline) {
 
     let mut x2apic_msr = x86_64::registers::model_specific::Msr::new(0x830);
 
@@ -273,8 +297,7 @@ unsafe fn startup_ap_x2apic(
 unsafe fn startup_ap_lapic(
     apic_id: u32, 
     local_apic_base: Address,
-    trampoline: &Trampoline, 
-    _per_cpu_config: &mut PerCpuConfig) {
+    trampoline: &Trampoline) {
 
     let icr_high = local_apic_base + 0x310; // ICR High register offset
     let icr_low = local_apic_base + 0x300;  // ICR Low register offset
