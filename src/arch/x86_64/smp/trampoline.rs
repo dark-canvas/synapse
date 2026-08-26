@@ -36,6 +36,7 @@ global_asm!(
     ".globl cr3_patch",
     ".globl stack_patch",
     ".globl ap_entry_patch",
+    ".globl bootloader_config_patch",
     ".globl projected_mode_entry_patch",
     ".globl long_mode_entry_patch",
     ".globl cpu_state_patch",
@@ -125,6 +126,9 @@ global_asm!(
     "    shrq $32, %rdx",                  // uper 32-bits in edx
     "    wrmsr",
 
+    //"bootloader_config_patch:".
+    //"    movq $0x1122334455667788, %rbx",
+
     // jump into the rust entry code
     "ap_entry_patch:",
     "    movq $0x1122334455667788, %rax", // placeholder for relocation
@@ -161,6 +165,7 @@ unsafe extern "C" {
     static gdt_pointer_patch: u8;
     static cr3_patch: u8;
     static ap_entry_patch: u8;
+    //static bootloader_config_patch: u8;
     static stack_patch: u128;
     static cpu_state_patch: u128;
     
@@ -199,7 +204,7 @@ impl Trampoline {
 
     // TODO: specify the entry point as a rust function, and possibly even 
     // allow for passing a parameter to it (or a pointer to a struct of parameters)
-    pub fn new(address: Address, cr3: Address, entry_point: u64) -> Self {
+    pub fn new(address: Address, cr3: Address, entry_point: fn()) -> Self {
         assert!(address < 1024 * 1024); // 1mb
         assert!(address % 4096 == 0); // page aligned
 
@@ -210,6 +215,7 @@ impl Trampoline {
             address
         );
 
+        let entry_point = entry_point as Address;
         println!("ap entry: {:#x}", entry_point);
 
         // update any static values before we copy...
@@ -236,6 +242,7 @@ impl Trampoline {
             Relocation::new(&ap_entry_patch, 0xffffffffffffffff0000_u128).test_and_set(entry_point);
             Relocation::new(&lgdt_patch, 0xffff000000_u64).test_and_set(gdt_pointer_offset);
             Relocation::new(&gdt_pointer_patch, 0xffffffff_u32).test_and_set(relocated_gdt_start);
+            //Relocation::new(&bootloader_config_patch, 0xffffffffffffffff0000_u128).test_and_set(config.get_page_ptr());
         }
 
         // then copy into the real-mode address provided...
@@ -276,7 +283,6 @@ impl Trampoline {
         unsafe {
             Relocation::new(self.to_target_vector(&cpu_state_patch), 0xffffffffffffffff0000u128).set(cpu_state_addr);
         }
-
     }
 
     pub fn set_stack_pointer(&self, stack_pointer: Address) {

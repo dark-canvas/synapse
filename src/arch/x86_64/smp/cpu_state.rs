@@ -1,7 +1,9 @@
+use crate::Address;
 use crate::page_based;
 use crate::types::CpuId;
 use crate::errors::ErrCode;
 use super::per_cpu_data;
+use satus_struct::config::Config;
 use core::default::Default;
 use core::arch::asm;
 use num_traits::PrimInt;
@@ -21,9 +23,11 @@ pub enum State {
 pub struct CpuState {
     pub apic_id: u8, // TODO: CpuId (but stored as a u8)
     pub state: State,
+    pub config: Address, // Address of config from bootloader (struct needs to be default initializeable)
 }
 
 impl CpuState {
+    // or set config after?
     pub fn new(id: CpuId) -> &'static mut CpuState {
         page_based::allocator::new_at::<CpuState>( per_cpu_data::get_cpu_state_base(id) )
     }
@@ -44,6 +48,14 @@ impl CpuState {
             );
         }
         unsafe { &mut *(base_address as *mut CpuState) }
+    }
+
+    pub fn get_cpu_id(&self) -> CpuId {
+        self.apic_id as CpuId
+    }
+
+    pub fn get_bootloader_config(&self) -> Config {
+        Config::from_page(self.config)
     }
 }
 
