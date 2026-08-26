@@ -16,6 +16,7 @@ pub const NMI_STACK_INDEX: u16 = 1;
 pub const DEBUG_STACK_INDEX: u16 = 2;
 pub const MCE_STACK_INDEX: u16 = 3;
 
+// 4 pages each...
 const DEFAULT_STACK_SIZE: usize = 16384; // Arbitrary (also doesn't have to be a power of 2)
 const DOUBLE_FAULT_STACK_SIZE: usize = DEFAULT_STACK_SIZE;
 const NMI_STACK_SIZE: usize  = DEFAULT_STACK_SIZE;

@@ -8,6 +8,7 @@ pub mod per_cpu_data;
 use x86_64::registers::model_specific::ApicBaseFlags;
 use x86_64::structures::paging::PageTableFlags;
 use satus_struct::cpu_config::CpuConfig;
+use satus_struct::config::Config;
 use acpi::sdt::madt::{Madt, MadtEntry};
 use core::pin::Pin;
 use core::slice;
@@ -22,6 +23,7 @@ use crate::arch::x86_64::pager::PhysicalAddress;
 use crate::arch::x86_64::pager::VirtualAddress;
 use crate::arch::x86_64::pager::PageType;
 use crate::arch::x86_64::util::registers::get_cr3;
+use crate::arch::x86_64::init_core;
 use crate::types::CpuId;
 use self::acpi_handler::SynapseAcpiHandler;
 use self::trampoline::Trampoline;
@@ -35,6 +37,9 @@ pub fn kernel_ap_entry() {
     let cpu_state = unsafe { CpuState::get_local_cpu_state() };
     cpu_state.state = cpu_state::State::Initializing;
 
+    // TOOO: need cpu_config...
+    init_core(cpu_state.get_cpu_id(), &cpu_state.get_bootloader_config());
+
     // loop forever...
     loop {
         core::hint::spin_loop();
@@ -45,13 +50,16 @@ pub fn kernel_ap_entry() {
 // should to contained within an apic/x2apic module and exposed to, and used by, this module.
 // There's a lot of overlap between apic and smp which may deserve some refactoring once I get a 
 // better idea of where the separation should be.
-pub fn init(cpu_config: &mut CpuConfig) {
+pub fn init(config: &Config) {
+
+    let cpu_config = &mut config.get_cpu_config();
     println!("Bootloader reports {} CPUs", cpu_config.get_num_cpus());
 
     // allocate a CpuState for this CPU (the BSP)
     // the APs will have theirs allocated and set in GS via the trampoline
     let bspCpuState = CpuState::new(0);
     bspCpuState.state = State::Initializing;
+    bspCpuState.config = config.get_page_ptr();
     unsafe {
         core::arch::asm!(
             "movq {}, %rdx",             // full 64-bit CpuState pointer needs to be split...
@@ -99,7 +107,7 @@ pub fn init(cpu_config: &mut CpuConfig) {
     let trampoline = Trampoline::new(
         cpu_config.trampoline_address,
         get_cr3(),
-        kernel_ap_entry as *const () as Address,
+        kernel_ap_entry,
     );
 
     // And identity map it (it must be within the 1st MB such that it's reachable in 16-bit real mode)
@@ -178,6 +186,7 @@ pub fn init(cpu_config: &mut CpuConfig) {
             unsafe {
                 startup_ap(
                     apic_id, 
+                    config,
                     lapic_physical_address + PHYSICAL_OFFSET, 
                     &trampoline);
             }
@@ -201,6 +210,7 @@ pub fn init(cpu_config: &mut CpuConfig) {
 
 unsafe fn startup_ap(
     apic_id: u32, 
+    config: &Config,
     local_apic_base: Address,
     trampoline: &Trampoline) {
 
@@ -231,6 +241,7 @@ unsafe fn startup_ap(
     let cpu_state = CpuState::new(cpu_id);
     let cpu_stack = CpuStack::new(cpu_id);
     cpu_state.apic_id = u8::try_from(apic_id).unwrap();
+    cpu_state.config = config.get_page_ptr();
 
     trampoline.set_stack_pointer(cpu_stack.base.0); // TODO: accept the `cpu_stack` itself?
     trampoline.set_cpu_state(cpu_state);
