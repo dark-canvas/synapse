@@ -33,11 +33,9 @@ use self::cpu_stack::CpuStack;
 
 
 pub fn kernel_ap_entry() {
-    // Uncommenting this causes it to fail...
     let cpu_state = unsafe { CpuState::get_local_cpu_state() };
     cpu_state.state = cpu_state::State::Initializing;
 
-    // TOOO: need cpu_config...
     init_core(cpu_state.get_cpu_id(), &cpu_state.get_bootloader_config());
 
     // loop forever...
@@ -57,7 +55,7 @@ pub fn init(config: &Config) {
 
     // allocate a CpuState for this CPU (the BSP)
     // the APs will have theirs allocated and set in GS via the trampoline
-    let bspCpuState = CpuState::new(0);
+    let bspCpuState = CpuState::get(0);
     bspCpuState.state = State::Initializing;
     bspCpuState.config = config.get_page_ptr();
     unsafe {
@@ -238,8 +236,9 @@ unsafe fn startup_ap(
 
     // TODO: populate
     let cpu_id = apic_id as CpuId;
-    let cpu_state = CpuState::new(cpu_id);
-    let cpu_stack = CpuStack::new(cpu_id);
+    per_cpu_data::create_all(cpu_id);
+    let cpu_state = CpuState::get(cpu_id);
+    let cpu_stack = CpuStack::get(cpu_id);
     cpu_state.apic_id = u8::try_from(apic_id).unwrap();
     cpu_state.config = config.get_page_ptr();
 
