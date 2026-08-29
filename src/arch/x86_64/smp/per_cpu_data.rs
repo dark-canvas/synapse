@@ -119,7 +119,7 @@ mod tests {
         assert_eq!(get_exception_stack_base(bsp, ExceptionStackIndex::NmiStackIndex), VirtualAddress(0xFFFFFFF000006000));
         assert_eq!(get_exception_stack_base(bsp, ExceptionStackIndex::DebugStackIndex), VirtualAddress(0xFFFFFFF00000a000));
         assert_eq!(get_exception_stack_base(bsp, ExceptionStackIndex::MceStackIndex), VirtualAddress(0xFFFFFFF00000e000));
-        assert_eq!(get_tss_base(bsp), VirtualAddress(0xFFFFFFF000001028));
+        assert_eq!(get_tss_base(bsp), VirtualAddress(0xFFFFFFF000001038));
         assert_eq!(get_gdt_base(bsp), VirtualAddress(0xFFFFFFF000001000));
         assert_eq!(get_cpu_state_base(bsp), VirtualAddress(0xFFFFFFF000000000));
     }
@@ -132,7 +132,7 @@ mod tests {
         assert_eq!(get_exception_stack_base(cpu, ExceptionStackIndex::NmiStackIndex), VirtualAddress(0xFFFFFFF000306000));
         assert_eq!(get_exception_stack_base(cpu, ExceptionStackIndex::DebugStackIndex), VirtualAddress(0xFFFFFFF00030a000));
         assert_eq!(get_exception_stack_base(cpu, ExceptionStackIndex::MceStackIndex), VirtualAddress(0xFFFFFFF00030e000));
-        assert_eq!(get_tss_base(cpu), VirtualAddress(0xFFFFFFF000301028));
+        assert_eq!(get_tss_base(cpu), VirtualAddress(0xFFFFFFF000301038));
         assert_eq!(get_gdt_base(cpu), VirtualAddress(0xFFFFFFF000301000));
         assert_eq!(get_cpu_state_base(cpu), VirtualAddress(0xFFFFFFF000300000));
     }
