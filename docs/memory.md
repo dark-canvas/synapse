@@ -2,15 +2,14 @@
 
 ## Overview
 
-The memory map aims to allocate the top canonical addresses specifically 
-for usage.
+The memory map aims to allocate the top canonical addresses specifically for usage.
 The kernel itself is loaded at 0xFFFFFF8000000000.
 
 In order to allow for easier page table management, the entire physical address space (up to 512GB) is mapped to 0xFFFFFF0000000000.
 
 ## Allocation at PLM4 Level
 
-Each index into the PLM4 table references a 512GB block of memory.
+Each index into the PLM4 table references a 512GB block of memory, which is further layed out as follows:
 
 <table>
   <thead>
@@ -75,7 +74,20 @@ Each index into the PLM4 table references a 512GB block of memory.
   </tbody>
 </table>
 
+## Per Cpu Allocation
 
+As shown above, starting at `0xFFFFFFF000000000` there is a 2MB block per each active CPU core.
+This block contains the core's stack, and an object (CpuState) containing essential configuration 
+and structures.
+Additionally, each of the exception stack's contained in the TSS are allocated in this 2MB block (where?)
+
+Exception stacks == 4*4 = 16kb each, * 4 stacks == 64kb
+
+Allocate the GDT out of this block as well?
+- How big is it?  null, data and code descriptor + tss descriptor = 60 bytes
+
+Also the TSS
+-104 bytes
 
 ## Graph 
 
