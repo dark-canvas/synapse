@@ -3,7 +3,7 @@ pub mod handlers;
 use spin::Lazy;
 use x86_64::structures::idt::InterruptDescriptorTable;
 
-use super::gdt;
+use super::gdt::ExceptionStackIndex;
 use super::pit::timer_interrupt_handler;
 
 use self::handlers::default_handler_x86;
@@ -74,9 +74,9 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
         idt.divide_error.set_handler_fn(default_handler_x86::<DivideByZeroMetaData>);
         unsafe {
             idt.debug.set_handler_fn(default_handler_x86::<DebugMetaData>)
-                     .set_stack_index(gdt::DEBUG_STACK_INDEX);
+                     .set_stack_index(ExceptionStackIndex::DebugStackIndex as u16);
             idt.non_maskable_interrupt.set_handler_fn(default_handler_x86::<NonMaskableInterruptMetaData>)
-                                    .set_stack_index(gdt::NMI_STACK_INDEX);
+                                    .set_stack_index(ExceptionStackIndex::NmiStackIndex as u16);
         }
 
         idt.breakpoint.set_handler_fn(default_handler_x86::<BreakpointMetaData>);
@@ -86,7 +86,7 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
         idt.device_not_available.set_handler_fn(default_handler_x86::<DeviceNotAvailableMetaData>);
         unsafe {
             idt.double_fault.set_handler_fn(diverging_handler_with_error_code_x86::<DoubleFaultMetaData>)
-                            .set_stack_index(gdt::DOUBLE_FAULT_STACK_INDEX);
+                            .set_stack_index(ExceptionStackIndex::DoubleFaultStackIndex as u16);
         }
         idt.invalid_tss.set_handler_fn(default_handler_with_error_code_x86::<InvalidTssMetaData>);
         idt.segment_not_present.set_handler_fn(default_handler_with_error_code_x86::<SegmentNotPresentMetaData>);
@@ -97,7 +97,7 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
         idt.alignment_check.set_handler_fn(default_handler_with_error_code_x86::<AlignmentCheckMetaData>);
         unsafe {
             idt.machine_check.set_handler_fn(diverging_handler_x86::<MachineCheckMetaData>)
-                             .set_stack_index(gdt::MCE_STACK_INDEX);
+                             .set_stack_index(ExceptionStackIndex::MceStackIndex as u16);
         }
         idt.simd_floating_point.set_handler_fn(default_handler_x86::<SimdFloatingPointMetaData>);
         idt.virtualization.set_handler_fn(default_handler_x86::<VirtualizationMetaData>);

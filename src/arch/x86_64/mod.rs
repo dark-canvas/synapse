@@ -36,7 +36,7 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
 
     // Need to determine how many of these can be (or need to be) initialized per core, 
     // or if it's fine just doing on the BSP
-    gdt::init();
+    gdt::init(cpu_id);
     idt::init_idt();
     x2apic::init();
     pit::init();
