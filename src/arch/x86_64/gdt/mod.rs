@@ -4,93 +4,105 @@ use x86_64::VirtAddr;
 use x86_64::structures::tss::TaskStateSegment;
 use x86_64::instructions::tables::load_tss;
 use x86_64::instructions::segmentation::{CS, DS, ES, FS, GS, SS, Segment};
-use x86_64::structures::gdt::{GlobalDescriptorTable, Descriptor, SegmentSelector};
+use x86_64::structures::gdt::{
+    GlobalDescriptorTable, Descriptor, SegmentSelector};
+use x86_64::structures::DescriptorTablePointer;
+use x86_64::instructions::tables::lgdt;
 use spin::Lazy;
+use crate::types::CpuId;
+use crate::arch::x86_64::smp::per_cpu_data;
+use crate::arch::x86_64::smp::per_cpu_data::get_exception_stack_base;
 
 // See https://www.kernel.org/doc/Documentation/x86/kernel-stacks for a description of 
 // some uses of independent stacks
 // TODO: define other stacks, also a macro to create them?
 
-pub const DOUBLE_FAULT_STACK_INDEX: u16 = 0;
-pub const NMI_STACK_INDEX: u16 = 1;
-pub const DEBUG_STACK_INDEX: u16 = 2;
-pub const MCE_STACK_INDEX: u16 = 3;
-
-// 4 pages each...
-const DEFAULT_STACK_SIZE: usize = 16384; // Arbitrary (also doesn't have to be a power of 2)
-const DOUBLE_FAULT_STACK_SIZE: usize = DEFAULT_STACK_SIZE;
-const NMI_STACK_SIZE: usize  = DEFAULT_STACK_SIZE;
-const DEBUG_STACK_SIZE: usize = DEFAULT_STACK_SIZE;
-const MCE_STACK_SIZE: usize = DEFAULT_STACK_SIZE;
-
-static mut DOUBLE_FAULT_STACK: [u8; DOUBLE_FAULT_STACK_SIZE] = [0; DOUBLE_FAULT_STACK_SIZE];
-static mut NMI_STACK: [u8; NMI_STACK_SIZE] = [0; NMI_STACK_SIZE];
-static mut DEBUG_STACK: [u8; DEBUG_STACK_SIZE] = [0; DEBUG_STACK_SIZE];
-static mut MCE_STACK: [u8; MCE_STACK_SIZE] = [0; MCE_STACK_SIZE];
-
-static TSS: Lazy<TaskStateSegment> = Lazy::new(|| {
-    let mut tss = TaskStateSegment::new();
-    tss.interrupt_stack_table[DOUBLE_FAULT_STACK_INDEX as usize] = 
-        VirtAddr::from_ptr(&raw const DOUBLE_FAULT_STACK) +
-        DOUBLE_FAULT_STACK_SIZE as u64;
-    tss.interrupt_stack_table[NMI_STACK_INDEX as usize] = 
-        VirtAddr::from_ptr(&raw const NMI_STACK) +
-        NMI_STACK_SIZE as u64;
-    tss.interrupt_stack_table[DEBUG_STACK_INDEX as usize] = 
-        VirtAddr::from_ptr(&raw const DEBUG_STACK) +
-        DEBUG_STACK_SIZE as u64;
-    tss.interrupt_stack_table[MCE_STACK_INDEX as usize] = 
-        VirtAddr::from_ptr(&raw const MCE_STACK) +
-        MCE_STACK_SIZE as u64;
-
-    tss
-});
-
-
-struct RingSelectors {
-    code_selector: SegmentSelector,
-    data_selector: SegmentSelector,
+#[derive(Clone, Copy)]
+pub enum ExceptionStackIndex {
+    DoubleFaultStackIndex,
+    NmiStackIndex,
+    DebugStackIndex,
+    MceStackIndex,
 }
 
-struct Selectors {
-    ring0: RingSelectors,
-    #[allow(dead_code)]
-    ring3: RingSelectors,
-    tss_selector: SegmentSelector,
+pub const RING_0_CODE_SELECTOR : u16 = 0x08;
+pub const RING_0_DATA_SELECTOR : u16 = 0x10;
+pub const RING_3_CODE_SELECTOR : u16 = 0x18;
+pub const RING_3_DATA_SELECTOR : u16 = 0x20;
+pub const TSS_SELECTOR : u16 = 0x28;
+
+pub const GDT_SIZE: usize = 56; // null + (kernel + user)(code + data) + tss descriptors = 5 * 8 + 16 
+
+pub unsafe fn create_tss(cpu_id: CpuId) {
+    let tss_addr = per_cpu_data::get_tss_base(cpu_id);
+    let tss_ptr = tss_addr.0 as *mut TaskStateSegment;
+    
+    // setup up initial default values (effectively construct the TSS in place)
+    tss_ptr.write(TaskStateSegment::new());
+    
+    for stack in [ 
+        ExceptionStackIndex::DoubleFaultStackIndex,
+        ExceptionStackIndex::NmiStackIndex,
+        ExceptionStackIndex::DebugStackIndex,
+        ExceptionStackIndex::MceStackIndex ] {
+
+        (*tss_ptr).interrupt_stack_table[stack as usize] = 
+            VirtAddr::new(
+                get_exception_stack_base(cpu_id, stack).0
+            );
+    }
 }
 
-static GDT: Lazy<(GlobalDescriptorTable, Selectors)> = Lazy::new(|| {
-    // TODO: do I care about order?
-    let mut gdt = GlobalDescriptorTable::new();
-    let selectors = Selectors {
-        ring0: RingSelectors {
-            code_selector: gdt.append(Descriptor::kernel_code_segment()),
-            data_selector: gdt.append(Descriptor::kernel_data_segment()),
-        },
-        ring3: RingSelectors {
-            code_selector: gdt.append(Descriptor::user_code_segment()),
-            data_selector: gdt.append(Descriptor::user_data_segment()),
-        },
-        tss_selector: gdt.append(Descriptor::tss_segment(&*TSS)),
+pub unsafe fn create_gdt(cpu_id: CpuId) {
+    let tss_addr = per_cpu_data::get_tss_base(cpu_id);
+    let tss_ptr = tss_addr.0 as *const TaskStateSegment;
+
+    let gdt_addr = per_cpu_data::get_gdt_base(cpu_id);
+    let mut gdt_ptr = gdt_addr.0 as *mut u64;
+    
+    for descriptor in [ 
+        Descriptor::UserSegment(0), // null descriptor
+        Descriptor::kernel_code_segment(),
+        Descriptor::kernel_data_segment(),
+        Descriptor::user_code_segment(),
+        Descriptor::user_data_segment(),
+        Descriptor::tss_segment_unchecked(tss_ptr),
+    ] {
+        match(descriptor) {
+            Descriptor::UserSegment(raw) => {
+                gdt_ptr.write(raw);
+                gdt_ptr = gdt_ptr.add(1);
+            },
+            Descriptor::SystemSegment(lower, upper) => {
+                gdt_ptr.write(lower);
+                gdt_ptr = gdt_ptr.add(1);
+                gdt_ptr.write(upper);
+                gdt_ptr = gdt_ptr.add(1);
+            }
+        }
+    }
+}
+
+pub unsafe fn load_gdt(cpu_id: CpuId) {
+    let gdt_pointer = DescriptorTablePointer {
+        limit: (GDT_SIZE - 1) as u16, 
+        base: VirtAddr::new(per_cpu_data::get_gdt_base(cpu_id).0),
     };
-    (gdt, selectors)
-});
+    lgdt(&gdt_pointer);
+}
 
-pub fn init() {
-    let gdt = &*GDT;
-    gdt.0.load();
+pub fn init(cpu_id: CpuId) {
     unsafe {
-        CS::set_reg(gdt.1.ring0.code_selector);
-        // Eother of these cause a GPF later on for some reason...
-        // or maybe not?  Sometimes I buid and run and I get a GPF, other times it works... 
-        // I don't understand...
-        // No matter what, setting DS causes a GPF later on
-        DS::set_reg(GDT.1.ring0.data_selector);
-        ES::set_reg(GDT.1.ring0.data_selector);
-        // Presumably I also need to set SS, GS and FS....
-        GS::set_reg(GDT.1.ring0.data_selector);
-        FS::set_reg(GDT.1.ring0.data_selector);
-        SS::set_reg(GDT.1.ring0.data_selector);
-        load_tss(GDT.1.tss_selector);
+        create_tss(cpu_id);
+        create_gdt(cpu_id);
+        load_gdt(cpu_id);
+
+        CS::set_reg(SegmentSelector(RING_0_CODE_SELECTOR));
+
+        DS::set_reg(SegmentSelector(RING_0_DATA_SELECTOR));
+        ES::set_reg(SegmentSelector(RING_0_DATA_SELECTOR));
+        SS::set_reg(SegmentSelector(RING_0_DATA_SELECTOR));
+ 
+        load_tss(SegmentSelector(TSS_SELECTOR));
     }
 }
