@@ -123,8 +123,9 @@ A task can either be represented by a 32-bit index into this table, or the actua
 While I likely wont support AVX-512 initially, it makes sense to include it in the allocation to prepare for 
 future support.
 
-The structure current sits at around 27kb... need to confirm how many more things need to be here, but the 
-final allocation could possible by 32k or 64k per task.
+The structure currently sits at around 27kb... need to confirm how many more things need to be here, but the 
+final allocation could possible by 32k or 64k per task, which would allow for a maximum of approx 2M or 1M 
+tasks respectively, minus the size required for either an allocation bitmap, or recently-freed stack.
 
 Possibly makes sense for a task name to be in the structure, but I could also see including that name in the 
 task's virtual address space (i.e., some data structure can also be encoded at the top of the ring3 stack)
