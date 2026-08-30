@@ -33,7 +33,6 @@ Each index into the PLM4 table references a 512GB block of memory, which is furt
       <td align="center">CPU Stacks/Metadata (Expanding Up)</td>
       <td align="center"><tt>0xFFFFFFF000000000</tt></td>
       <td>1MB alloction per CPU (up to 256 CPUs)<br/>[More details here](#per-cpu-state) </td>
-    <tr>
     </tr>
     <tr>
       <td align="center">512GB Page Aggregator</td>
