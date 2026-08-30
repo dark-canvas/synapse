@@ -27,12 +27,12 @@ Each index into the PLM4 table references a 512GB block of memory, which is furt
       <td align="center" rowspan="9"><tt>0xFFFFFFFFFFFFFFFF</tt><br><tt>0xFFFFFF8000000000</tt></td>
       <td align="center">Task State Data</td>
       <td align="center"><tt>0xFFFFFFF010000000</tt></td>
-      <td>Task Stacks/Metadata<br/>[More details here](#per-task-state) </td>
+      <td>Task Stacks/Metadata<br/><a href="#per-task-state">More details</a></td>
     </tr>
     <tr>
       <td align="center">CPU Stacks/Metadata (Expanding Up)</td>
       <td align="center"><tt>0xFFFFFFF000000000</tt></td>
-      <td>1MB alloction per CPU (up to 256 CPUs)<br/>[More details here](#per-cpu-state) </td>
+      <td>1MB alloction per CPU (up to 256 CPUs)<br/><a href="#per-cpu-state">More details</a> </td>
     </tr>
     <tr>
       <td align="center">512GB Page Aggregator</td>
@@ -79,12 +79,26 @@ Each index into the PLM4 table references a 512GB block of memory, which is furt
   </tbody>
 </table>
 
-## Per Core State
+## Per Cpu State
 
-As shown above, starting at `0xFFFFFFF000000000` there is a 2MB block per each active CPU core.
-This block contains the core's stack, and an object (CpuState) containing essential configuration 
-and structures.
-Additionally, each of the exception stack's contained in the TSS are allocated in this 2MB block (where?)
+As shown above, starting at `0xFFFFFFF000000000` there is a 1MB block per each active CPU core.
+This block contains the core's stack, it's GDT and TSS, and an object (CpuState) containing essential configuration 
+and structures (such as the scheduler).
+Additionally, each of the exception stack's contained in the TSS are allocated in this 1MB block.
+
+| Item             | Number Of Pages |
+| ---------------- | --------------- |
+| Stack            | 238             |
+| Exception Stacks | 4 * 4 = 16      |
+| GDT + TSS        | 1               |
+| CpuState         | 1               |
+
+The main core stack, which supports running the core initialiation and then the scheduler, exists at the top 
+of the 1MB block and expands downward.
+Each of the 4 exceptions stacks (double fault, NMI, debug and MCE) come next at 16kb each.
+The GDT is at the base of the next page, with the TSS included directly above it within the same page.
+The base of the 1MB page contains the CpuState structure.
+
 
 Exception stacks == 4*4 = 16kb each, * 4 stacks == 64kb
 
