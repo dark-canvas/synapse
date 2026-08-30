@@ -4,6 +4,7 @@ pub mod pager;
 pub mod pit;
 pub mod scheduler;
 pub mod smp;
+pub mod task_map;
 #[macro_use]
 pub mod util;
 pub mod x2apic;
