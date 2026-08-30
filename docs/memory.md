@@ -23,11 +23,16 @@ Each index into the PLM4 table references a 512GB block of memory, which is furt
   </thead>
   <tbody>
     <tr>
-      <td align="center" rowspan="8">511</td>
-      <td align="center" rowspan="8"><tt>0xFFFFFFFFFFFFFFFF</tt><br><tt>0xFFFFFF8000000000</tt></td>
+      <td align="center" rowspan="9">511</td>
+      <td align="center" rowspan="9"><tt>0xFFFFFFFFFFFFFFFF</tt><br><tt>0xFFFFFF8000000000</tt></td>
+      <td align="center">Task State Data</td>
+      <td align="center"><tt>0xFFFFFFF010000000</tt></td>
+      <td>Task Stacks/Metadata<br/>[More details here](#per-task-state) </td>
+    </tr>
       <td align="center">CPU Stacks/Metadata (Expanding Up)</td>
       <td align="center"><tt>0xFFFFFFF000000000</tt></td>
-      <td>1MB stack + 1MB Meta per CPU core.  ~64GB Available here.</td>
+      <td>1MB alloction per CPU (up to 256 CPUs)<br/>[More details here](#per-cpu-state) </td>
+    <tr>
     </tr>
     <tr>
       <td align="center">512GB Page Aggregator</td>
@@ -69,12 +74,12 @@ Each index into the PLM4 table references a 512GB block of memory, which is furt
       <td align="center"><tt>0xFFFFFF7FFFFFFFFF</tt><br><tt>0xFFFFFF0000000000</tt></td>
       <td align="center">Physical Mirror</td>
       <td align="center">*</td>
-      <td>Kernel Stack also expands down from top, which overlaps mirror.  This needs to be fixed.</td>
+      <td>Up to 512GB of physical memory "offset identity mapped" here.</td>
     </tr>
   </tbody>
 </table>
 
-## Per Cpu Allocation
+## Per Core State
 
 As shown above, starting at `0xFFFFFFF000000000` there is a 2MB block per each active CPU core.
 This block contains the core's stack, and an object (CpuState) containing essential configuration 
@@ -88,6 +93,11 @@ Allocate the GDT out of this block as well?
 
 Also the TSS
 -104 bytes
+
+## Per Task State
+
+In order to represent tasks by a simple ID, an array is allocated (paged in on demand) containing the 
+task stack and meta data.
 
 ## Graph 
 
