@@ -99,19 +99,35 @@ Each of the 4 exceptions stacks (double fault, NMI, debug and MCE) come next at 
 The GDT is at the base of the next page, with the TSS included directly above it within the same page.
 The base of the 1MB page contains the CpuState structure.
 
-
-Exception stacks == 4*4 = 16kb each, * 4 stacks == 64kb
-
-Allocate the GDT out of this block as well?
-- How big is it?  null, data and code descriptor + tss descriptor = 60 bytes
-
-Also the TSS
--104 bytes
-
 ## Per Task State
 
 In order to represent tasks by a simple ID, an array is allocated (paged in on demand) containing the 
 task stack and meta data.
+A stack of recently freed IDs is also contained in this section in order to prevent fragmentation, or 
+excessive growth, of the array.
+There is just under 64GB in this section (64GB - 256MB) which allows for many unique tasks to be 
+allocated/runnable.
+
+| Item          | Size        | Description |
+| ------------- | ----------- | ----------- |
+| Ring0 Stack   | 8 or 16kb?  | Each userland task requires it's own kernel stack |
+| IO Bitmap     | 8193 bytes  | To allow driver tasks to allocate hardare.  8192 bits + 0xff byte |
+| CR3           | 8 bytes     | Defines the memory address space for the task |
+| GS Base       | 8 bytes     | Base address of the per-task data structure allocated by the task |
+| Registers     | ~200 bytes  | All the general purpose registers, flags, instruction pointer, etc |
+| FP Registers  | 512 bytes   | Floating point registers; dependent on use, but must allocate space for them |
+| AVX-512 State | ~2500 bytes | Unsure about this size, and whether its a super-set of the FP registers |
+
+A task can either be represented by a 32-bit index into this table, or the actual pointer into the table.
+
+While I likely wont support AVX-512 initially, it makes sense to include it in the allocation to prepare for 
+future support.
+
+The structure current sits at around 27kb... need to confirm how many more things need to be here, but the 
+final allocation could possible by 32k or 64k per task.
+
+Possibly makes sense for a task name to be in the structure, but I could also see including that name in the 
+task's virtual address space (i.e., some data structure can also be encoded at the top of the ring3 stack)
 
 ## Graph 
 
