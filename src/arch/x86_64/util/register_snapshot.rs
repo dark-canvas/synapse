@@ -1,7 +1,7 @@
 use crate::KERNEL_START;
 
 #[repr(C)]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct RegisterSnapshot {
     pub rax: u64,
     pub rbx: u64,
