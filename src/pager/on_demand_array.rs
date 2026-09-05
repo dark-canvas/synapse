@@ -3,13 +3,13 @@ use crate::errors::ErrCode;
 use crate::arch::x86_64::pager::VirtualAddress;
 use super::get_pager;
 
-pub struct OnDemandArray<T: Copy> {
+pub struct OnDemandArray<T> {
     base_address: VirtualAddress,
     num_items: usize,
     _phantom: PhantomData<T>,
 }
 
-impl<T: Copy> OnDemandArray<T> {
+impl<T> OnDemandArray<T> {
     pub fn new(base_address: VirtualAddress, num_items: usize) -> Self {
         Self {
             base_address,
