@@ -160,6 +160,23 @@ impl Sub<usize> for PhysicalAddress {
     }
 }
 
+// subtracting addresses (eg. top - bottom, or item - base) yields a size
+impl Sub<VirtualAddress> for VirtualAddress {
+    type Output = usize;
+
+    fn sub(self, rhs: VirtualAddress) -> Self::Output {
+        (self.0 - rhs.0) as usize
+    }
+}
+
+impl Sub<PhysicalAddress> for PhysicalAddress {
+    type Output = PhysicalAddress;
+
+    fn sub(self, rhs: PhysicalAddress) -> Self::Output {
+        PhysicalAddress(self.0 - rhs.0)
+    }
+}
+
 #[derive(PartialEq, Copy, Clone)]
 pub enum PageType {
     Page4KB,
@@ -1080,6 +1097,11 @@ impl PagerInterface for Pager {
     fn get_page_size(&self) -> usize {
         4096
     }
+
+    fn get_page_size_log2(&self) -> usize {
+        12
+    }
+
     fn allocate_physical(&self) -> Result<PhysicalAddress, ErrCode> { 
         self.allocate_4kb_page().map(PhysicalAddress).ok_or(ErrCode::OutOfMemory)
     }

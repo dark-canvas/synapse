@@ -14,8 +14,17 @@ pub enum ErrCode {
     #[error("invalid parameter")]
     InvalidParameter,
 
+    #[error("invalid handle")]
+    InvalidHandle,
+
+    #[error("out of bounds")]
+    OutOfBounds,
+
     #[error("out of memory")]
     OutOfMemory,
+
+    #[error("out of handles")]
+    OutOfHandles,
 
     #[error("error from pager module")]
     Pager(#[from] PagerError),
