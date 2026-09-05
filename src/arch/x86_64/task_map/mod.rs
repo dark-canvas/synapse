@@ -15,8 +15,6 @@ const TASK_MAP_BASE_ADDRESS: VirtualAddress = VirtualAddress(0xFFFFFFF010000000)
 const TASK_MAP_TOP: VirtualAddress = VirtualAddress(0xFFFFFFFFFFFFFFFF);
 const TASK_MAP_SIZE: usize = TASK_MAP_TOP.0 as usize - TASK_MAP_BASE_ADDRESS.0 as usize + 1;
 
-// TODO: allocating more than the struct size is wasteful
-//const TASK_MAP_ITEM_SIZE: usize = 32768; // Can support ~2M tasks (although the free stack eats into that)
 const TASK_MAP_MAX_TASKS: usize = 1_048_576; // 1M for now; can likely support more
 
 const TASK_MAP_ARRAY_SIZE: usize = TASK_MAP_MAX_TASKS * core::mem::size_of::<Task>();
@@ -24,9 +22,6 @@ const TASK_MAP_FREE_STACK_SIZE: usize = TASK_MAP_MAX_TASKS * core::mem::size_of:
 
 pub type TaskHandle = u32;
 
-// TODO: a copy is inefficient with a struct this size... need to figure out a better way to initialize 
-// in place; the works for now, to get off the ground, though.
-#[derive(Debug, Clone, Copy)]
 pub struct Task {
     kernel_stack: [u8; 16*1024],
     io_bitmap: [u8; 8193],
@@ -38,8 +33,8 @@ pub struct Task {
 }
 
 const _: () = {
-    //assert!(core::mem::size_of::<Task>() < TASK_MAP_ITEM_SIZE, "Task is too large!");
     assert!(TASK_MAP_ARRAY_SIZE + TASK_MAP_FREE_STACK_SIZE <= TASK_MAP_SIZE, "Task map is too small!");
+    assert!(TASK_MAP_MAX_TASKS <= TaskHandle::MAX as usize, "Task map larger than TaskHandle can support!");
 };
 
 // TODO: this is shared between CPUs and so will need a CPU mutex
@@ -66,11 +61,10 @@ impl TaskMap {
     pub fn new_task(&mut self) -> Result<&'static Task, ErrCode> {
         if let Ok(handle) = self.free_stack.pop() {
             // Implementation for creating a new task
-            return Err(ErrCode::Unimplemented);
-        } else if let Ok(handle) = self.tasks.get(self.next_handle as usize) {
+            return self.construct(self.tasks.get_mut(handle as usize)?);
+        } else if let Ok(task) = self.tasks.get_mut(self.next_handle as usize) {
             self.next_handle += 1;
-            // Implementation for creating a new task
-            return Err(ErrCode::Unimplemented);
+            return self.construct(task);
         } else {
             return Err(ErrCode::OutOfHandles);
         }
@@ -86,6 +80,17 @@ impl TaskMap {
             self.free_stack.push(handle)?;
         }
         Ok(())
+    }
+
+    fn construct(&self, task: &'static mut Task) -> Result<&'static Task, ErrCode> {
+        // Initialize the stack (TODO: make this runtime configurable)
+        for byte in task.kernel_stack.iter_mut() {
+            *byte = 0xa5;
+        }
+        // Initialize the IO bitmap (by defualt tasks have no IO permissions, so we set all bits to 0)
+        task.io_bitmap.fill(0x0);
+        // TODO: create a separate address space for this task
+        Ok(task)
     }
 }
 
