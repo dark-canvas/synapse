@@ -8,8 +8,8 @@ import sys
 # map of percent coverage to the colour it should appear as
 COVERAGE_CATEGORIES = {
    80: "lime",
-   60: "orangered",
-    0: "red",
+   60: "yellow",
+    0: "orangered",
 }
 
 
@@ -56,11 +56,27 @@ def percent_value(summary_obj, key):
         return 0.0
 
 
-def build_markdown(rows):
+def build_markdown(rows, head_totals=None, baseline_totals=None):
     lines = []
     lines.append("<!-- coverage-report -->")
     lines.append("### Coverage report summary")
     lines.append("")
+
+    # overall totals table
+    if head_totals:
+        lines.append("| Metric | Base | Head | Delta |")
+        lines.append("| --- | ---: | ---: | ---: |")
+        metrics = ['functions', 'lines', 'regions', 'branches']
+        for m in metrics:
+            head_pct = percent_from_totals(head_totals[m])
+            if baseline_totals:
+                base_pct = percent_from_totals(baseline_totals[m])
+                delta = head_pct - base_pct
+                lines.append(f"| {m.capitalize()} | {base_pct:.1f}% | {head_pct:.1f}% | {delta:+.1f}pp |")
+            else:
+                lines.append(f"| {m.capitalize()} | - | {head_pct:.1f}% | - |")
+        lines.append("")
+
     lines.append("| File | Function | Line | Region | Branch |")
     lines.append("| --- | --- | --- | --- | --- |")
     for row in rows:
@@ -73,9 +89,62 @@ def build_markdown(rows):
     return "\n".join(lines)
 
 
-def parse_coverage_summary(summary_path, max_rows=50, changed_files=None):
+def compute_totals_from_payload(payload):
+    totals = {
+        'functions': {'covered': 0, 'count': 0},
+        'lines': {'covered': 0, 'count': 0},
+        'regions': {'covered': 0, 'count': 0},
+        'branches': {'covered': 0, 'count': 0},
+    }
+    for entry in payload.get('data', []):
+        for file_data in entry.get('files', []):
+            summary = file_data.get('summary') or {}
+            for key in totals.keys():
+                metric = summary.get(key) or {}
+                covered = metric.get('covered')
+                count = metric.get('count')
+                # Some summaries may only have percent; skip those files for totals
+                if covered is None or count is None:
+                    continue
+                totals[key]['covered'] += covered
+                totals[key]['count'] += count
+    return totals
+
+
+def percent_from_totals(tot):
+    if tot['count'] == 0:
+        return 0.0
+    return (tot['covered'] / tot['count']) * 100.0
+
+
+def parse_coverage_summary(summary_path, max_rows=50, changed_files=None, baseline_path=None):
     with open(summary_path, "r", encoding="utf-8") as fh:
         payload = json.load(fh)
+
+    baseline_map = {}
+    baseline_totals = None
+    if baseline_path and os.path.exists(baseline_path):
+        try:
+            with open(baseline_path, 'r', encoding='utf-8') as bf:
+                base_payload = json.load(bf)
+            # build per-file percent map from baseline
+            for entry in base_payload.get('data', []):
+                for file_data in entry.get('files', []):
+                    filename = file_data.get('filename') or file_data.get('file') or file_data.get('path')
+                    summary = file_data.get('summary') or {}
+                    if not filename or not isinstance(summary, dict):
+                        continue
+                    rel_name = os.path.relpath(filename, os.getcwd())
+                    baseline_map[os.path.normpath(rel_name)] = {
+                        'functions': float(summary.get('functions', {}).get('percent', 0.0) or 0.0),
+                        'lines': float(summary.get('lines', {}).get('percent', 0.0) or 0.0),
+                        'regions': float(summary.get('regions', {}).get('percent', 0.0) or 0.0),
+                        'branches': float(summary.get('branches', {}).get('percent', 0.0) or 0.0),
+                    }
+            baseline_totals = compute_totals_from_payload(base_payload)
+        except Exception:
+            baseline_map = {}
+            baseline_totals = None
 
     changed_set = set()
     if changed_files and os.path.exists(changed_files):
@@ -96,20 +165,39 @@ def parse_coverage_summary(summary_path, max_rows=50, changed_files=None):
 
             rel_name = os.path.relpath(filename, os.getcwd())
             norm_rel = os.path.normpath(rel_name)
+            functions_pct = percent_value(summary, 'functions')
+            lines_pct = percent_value(summary, 'lines')
+            regions_pct = percent_value(summary, 'regions')
+            branches_pct = percent_value(summary, 'branches')
+
             display_name = rel_name
             if norm_rel in changed_set:
-                display_name = f"**🔷 {rel_name}**"
+                # include delta if baseline has the file
+                delta_parts = []
+                base = baseline_map.get(norm_rel)
+                if base:
+                    df = functions_pct - base.get('functions', 0.0)
+                    dl = lines_pct - base.get('lines', 0.0)
+                    dr = regions_pct - base.get('regions', 0.0)
+                    db = branches_pct - base.get('branches', 0.0)
+                    # show a concise per-file delta for lines (most useful) in the label
+                    delta_parts.append(f"lines {dl:+.1f}pp")
+                if delta_parts:
+                    display_name = f"**🔷 {rel_name} ({', '.join(delta_parts)})**"
+                else:
+                    display_name = f"**🔷 {rel_name}**"
 
             rows.append([
                 display_name,
-                f"{percent_value(summary, 'functions'):.1f}%",
-                f"{percent_value(summary, 'lines'):.1f}%",
-                f"{percent_value(summary, 'regions'):.1f}%",
-                f"{percent_value(summary, 'branches'):.1f}%",
+                f"{functions_pct:.1f}%",
+                f"{lines_pct:.1f}%",
+                f"{regions_pct:.1f}%",
+                f"{branches_pct:.1f}%",
             ])
 
     rows = sorted(rows, key=lambda row: row[0])[:max_rows]
-    return rows
+    head_totals = compute_totals_from_payload(payload)
+    return rows, head_totals, baseline_totals
 
 def read_file_list(fname):
     files = []
@@ -129,18 +217,24 @@ def main():
     parser.add_argument("output_markdown", help="Path to write the generated Markdown summary")
     parser.add_argument("--max-rows", type=int, default=50, help="Maximum number of rows to include in the markdown table")
     parser.add_argument("--changed-files", type=str, default="", help="List of files changed in this PR")
+    parser.add_argument("--baseline", type=str, default="", help="Optional baseline coverage JSON to compare against")
     args = parser.parse_args()
 
     if not os.path.exists(args.summary_json):
         print(f"Coverage summary JSON not found: {args.summary_json}", file=sys.stderr)
         return 0
 
-    rows = parse_coverage_summary(args.summary_json, max_rows=args.max_rows, changed_files=args.changed_files)
+    rows, head_totals, baseline_totals = parse_coverage_summary(
+        args.summary_json,
+        max_rows=args.max_rows,
+        changed_files=args.changed_files,
+        baseline_path=args.baseline if hasattr(args, 'baseline') else None,
+    )
     if not rows:
         print("No coverage records found in summary JSON")
         return 0
 
-    markdown = build_markdown(rows)
+    markdown = build_markdown(rows, head_totals=head_totals, baseline_totals=baseline_totals)
     with open(args.output_markdown, "w", encoding="utf-8") as out:
         out.write(markdown)
 
