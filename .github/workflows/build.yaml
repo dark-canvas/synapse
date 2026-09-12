@@ -204,3 +204,11 @@ jobs:
         with:
           name: coverage-report
           path: target/coverage/html
+
+      - name: Upload baseline coverage summary
+        if: github.ref == 'refs/heads/main' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-baseline
+          path: target/coverage/summary.json
+          retention-days: 30
