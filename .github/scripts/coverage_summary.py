@@ -41,10 +41,10 @@ def styled_cell(value):
     except ValueError:
         return value
 
-    value = value.replace("%", r"\%")
+    value = value.replace("%", r"\\%")
 
     colour = coverage_color_for(numeric_value)
-    return f"$$\\color{{{colour}}}{{{value}}}$$"
+    return f"$$\\color{{{colour}}}\\text{{{value}}}$$"
 
 
 def percent_value(summary_obj, key):
