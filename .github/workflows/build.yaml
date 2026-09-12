@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+  issues: write
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -62,6 +66,101 @@ jobs:
         run: |
           mkdir -p target/coverage/html
           CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --html --output-dir target/coverage/html
+
+      - name: Create Markdown summary from HTML report
+        run: |
+          python3 - <<'PY'
+          from html.parser import HTMLParser
+          import sys
+          p = 'target/coverage/html/index.html'
+          class T(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.tables = []
+                  self.in_table = False
+                  self.in_tr = False
+                  self.in_td = False
+                  self.current_cell = ''
+                  self.current_row = []
+                  self.current_table = []
+              def handle_starttag(self, tag, attrs):
+                  if tag == 'table':
+                      self.in_table = True
+                      self.current_table = []
+                  if self.in_table and tag == 'tr':
+                      self.in_tr = True
+                      self.current_row = []
+                  if self.in_tr and tag in ('td','th'):
+                      self.in_td = True
+                      self.current_cell = ''
+              def handle_endtag(self, tag):
+                  if tag in ('td','th') and self.in_td:
+                      self.in_td = False
+                      self.current_row.append(self.current_cell.strip())
+                  if tag == 'tr' and self.in_tr:
+                      self.in_tr = False
+                      if self.current_row:
+                          self.current_table.append(self.current_row)
+                  if tag == 'table' and self.in_table:
+                      self.in_table = False
+                      self.tables.append(self.current_table)
+              def handle_data(self, data):
+                  if self.in_td:
+                      self.current_cell += data
+          try:
+              html = open(p,'r',encoding='utf-8').read()
+          except FileNotFoundError:
+              print('index.html not found at', p)
+              sys.exit(0)
+          parser = T()
+          parser.feed(html)
+          # Find a table that looks like the per-file coverage table by header
+          table = None
+          for t in parser.tables:
+              if not t: continue
+              header = [c.lower() for c in t[0]]
+              if any(h in header for h in ('function','file','filename')) and any(h in header for h in ('line','region','branch')):
+                  table = t
+                  break
+          if not table:
+              print('No suitable coverage table found')
+              sys.exit(0)
+          # Build markdown
+          md = []
+          md.append('### Coverage report summary')
+          md.append('')
+          # Use the header row
+          hdr = table[0]
+          md.append('| ' + ' | '.join(hdr) + ' |')
+          md.append('| ' + ' | '.join(['---']*len(hdr)) + ' |')
+          for row in table[1:51]:  # limit to first 50 rows to avoid huge comments
+              # normalize whitespace
+              row = [r.replace('\n',' ').strip() for r in row]
+              md.append('| ' + ' | '.join(row) + ' |')
+          md.append('')
+          md.append('_Full HTML report is attached to the workflow run as an artifact._')
+          open('coverage_summary.md','w',encoding='utf-8').write('\n'.join(md))
+          print('Wrote coverage_summary.md')
+          PY
+
+      - name: Post coverage summary to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const md = fs.existsSync('coverage_summary.md') ? fs.readFileSync('coverage_summary.md', 'utf8') : 'Coverage summary not available.';
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              console.log('Not a pull_request event; skipping comment');
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: md
+            })
 
       - name: Upload coverage report artifact
         uses: actions/upload-artifact@v4
