@@ -3,7 +3,61 @@ use crate::arch::x86_64::X86_PAGER;
 use crate::page_based_list::PageBasedList;
 use crate::Address;
 use crate::arch::x86_64::scheduler::VirtualAddress;
+use core::arch::asm;
 
+unsafe fn kernel_task_entry() {
+    asm!(
+        "popq %rax",
+        "call *%rax",
+        options(att_syntax),
+    )
+    // setup user stack
+    // iretd ? to return to ring3 code at the ring3 entry point
+}
+
+unsafe fn user_task_entry() {
+    asm!(
+        //"cli", // not strictly necessary
+        // ring 3 stack segment (0x20 data segment + 0x03 privilege level)
+        "pushq $0x23",
+        // setup a stack pointer (what should this be? 0x800000000000 ? )
+        //"movl $user_stack_top, %eax",
+        //"pushl %eax",
+
+        // stack base must be < 0x800000000000 (max address for lower canonical half is 0x7FFFFFFFFFFF)
+        "pushq $0x0x7FFFFFFFF000",
+
+        // Push the RFLAGS register (ensure interrupts are enabled)
+        //"pushfq",
+        //"popq %rax",
+        //"orq $0x200, %rax",
+        //"pushq %rax",
+        "pushq $0x202",  // interrupt enable and RPL=3 
+
+        // ring 3 code segment (0x18 code segment + 0x03 privilege level)
+        "pushq $0x1b",
+
+        // instruction pointer
+        "movq $ring3_user_entry, %rax",
+        "pushq %rax",
+
+        // Clear/set segment registers for User Space (DS, ES, FS, GS)
+        "movw $0x20, %ax",
+        "movw %ax, %ds",
+        "movw %ax, %es",
+        "movw %ax, %fs",
+        "movw %ax, %gs",
+
+        // Execute the return to Ring 3
+        "iretq",
+        options(att_syntax),
+    )
+    // setup user stack
+    // iretd ? to return to ring3 code at the ring3 entry point
+}
+
+// TODO: this is stale now that we have TaskMap... the page-based list should be of TaskHandle?
+// TODO: should actually be a PageBasedQueue, anyway... FIFO, but also somehow with priorities.
 // Must be, at most, 4096 - 8 to fit into page-based-list
 #[allow(dead_code)]
 pub struct Task {
