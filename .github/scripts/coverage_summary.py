@@ -140,7 +140,7 @@ def parse_coverage_summary(summary_path, max_rows=50, changed_files=None, baseli
                     continue
                 changed_set.add(os.path.normpath(line))
 
-    rows = []
+    grouped_rows = []
     for entry in payload.get("data", []):
         for file_data in entry.get("files", []):
             filename = file_data.get("filename") or file_data.get("file") or file_data.get("path")
@@ -156,24 +156,40 @@ def parse_coverage_summary(summary_path, max_rows=50, changed_files=None, baseli
             branches_pct = percent_value(summary, 'branches')
 
             display_name = rel_name
+            delta_row = None
             if norm_rel in changed_set:
-                # include line delta if baseline has the file
                 base = baseline_map.get(norm_rel)
                 if base:
+                    df = functions_pct - base.get('functions', 0.0)
                     dl = lines_pct - base.get('lines', 0.0)
-                    display_name = f"**🔷 {rel_name}** (Δ lines {dl:+.1f}pp)"
+                    dr = regions_pct - base.get('regions', 0.0)
+                    db = branches_pct - base.get('branches', 0.0)
+                    display_name = f"**🔷 {rel_name}**"
+                    delta_row = [
+                        "Δ vs main",
+                        f"{df:+.1f}pp",
+                        f"{dl:+.1f}pp",
+                        f"{dr:+.1f}pp",
+                        f"{db:+.1f}pp",
+                    ]
                 else:
                     display_name = f"**🔷 {rel_name}**"
 
-            rows.append([
+            row = [
                 display_name,
                 f"{functions_pct:.1f}%",
                 f"{lines_pct:.1f}%",
                 f"{regions_pct:.1f}%",
                 f"{branches_pct:.1f}%",
-            ])
+            ]
+            grouped_rows.append((norm_rel, row))
+            if delta_row is not None:
+                grouped_rows.append((norm_rel, delta_row))
 
-    rows = sorted(rows, key=lambda row: row[0])[:max_rows]
+    grouped_rows = sorted(grouped_rows, key=lambda item: item[0])
+    rows = []
+    for _, row in grouped_rows[:max_rows * 2]:
+        rows.append(row)
     head_totals = compute_totals_from_payload(payload)
     return rows, head_totals, baseline_totals
 
