@@ -14,31 +14,37 @@ COVERAGE_CATEGORIES = {
 
 
 def coverage_color_for(value):
-   """Return the text colour for a coverage percentage."""
-   try:
-       numeric_value = float(value)
-   except (TypeError, ValueError):
-       numeric_value = 0.0
+    """Return the text colour for a coverage percentage."""
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        numeric_value = 0.0
 
-   if numeric_value >= 80:
-       return COVERAGE_CATEGORIES[80]
-   if numeric_value >= 60:
-       return COVERAGE_CATEGORIES[60]
-   return COVERAGE_CATEGORIES[0]
+    text_color = "white"
+    delta = 100
+    for percent, colour in COVERAGE_CATEGORIES:
+        compare_delta = numeric_value - percent
+        if compare_delta > 0 and compare_delta < delta:
+            delta = compare_delta
+            text_color = colour
+
+    return text_color
 
 
 def styled_cell(value):
-   """Render a percentage cell using GitHub KaTeX text colouring."""
-   if not isinstance(value, str):
-       return str(value)
+    """Render a percentage cell using GitHub KaTeX text colouring."""
+    if not isinstance(value, str):
+        return str(value)
 
-   try:
-       numeric_value = float(value.rstrip("%"))
-   except ValueError:
-       return value
+    try:
+        numeric_value = float(value.rstrip("%"))
+    except ValueError:
+        return value
 
-   colour = coverage_color_for(numeric_value)
-   return f"$$\\color{{{colour}}}{{{value}}}$$"
+    value = value.replace("%", r"\%")
+
+    colour = coverage_color_for(numeric_value)
+    return f"$$\\color{{{colour}}}{{{value}}}$$"
 
 
 def percent_value(summary_obj, key):
