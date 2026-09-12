@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -36,3 +41,84 @@ jobs:
       #- name: Cargo clippy
       #  run: cargo clippy -- -D warnings
       #  if: matrix.toolchain == 'nightly'
+
+  coverage:
+    needs: build_and_test
+    runs-on: ubuntu-latest
+    if: success()
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+
+      - name: Install core sources (kernel needs to rebuild this for target arch)
+        run: rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+
+      - name: Install coverage tooling
+        run: |
+          rustup component add llvm-tools-preview --toolchain nightly-x86_64-unknown-linux-gnu
+          cargo +nightly install cargo-llvm-cov --version 0.8.7 --locked
+
+      - name: Generate HTML code coverage report
+        run: |
+          mkdir -p target/coverage/html
+          CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --json --summary-only --output-path target/coverage/summary.json
+          CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --html --output-dir target/coverage/html
+
+      - name: Create Markdown summary from coverage JSON
+        run: |
+          python3 .github/scripts/coverage_summary.py target/coverage/summary.json coverage_summary.md --max-rows 50
+
+      - name: Post coverage summary to PR
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const md = fs.existsSync('coverage_summary.md') ? fs.readFileSync('coverage_summary.md', 'utf8') : 'Coverage summary not available.';
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              console.log('Not a pull_request event; skipping comment');
+              return;
+            }
+
+            const marker = '<!-- coverage-report -->';
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              per_page: 100,
+            });
+
+            const existing = comments.data.find(comment => comment.body && comment.body.includes(marker));
+
+            const body = `${marker}\n${md.replace(marker, '').trim()}`;
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              console.log(`Updated existing coverage comment ${existing.id}`);
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body,
+            });
+            console.log('Created new coverage comment');
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: target/coverage/html
