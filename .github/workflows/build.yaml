@@ -127,6 +127,7 @@ jobs:
               sys.exit(0)
           # Build markdown
           md = []
+          md.append('<!-- coverage-report -->')
           md.append('### Coverage report summary')
           md.append('')
           # Use the header row
@@ -155,12 +156,37 @@ jobs:
               console.log('Not a pull_request event; skipping comment');
               return;
             }
+
+            const marker = '<!-- coverage-report -->';
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              per_page: 100,
+            });
+
+            const existing = comments.data.find(comment => comment.body && comment.body.includes(marker));
+
+            const body = `${marker}\n${md.replace(marker, '').trim()}`;
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              console.log(`Updated existing coverage comment ${existing.id}`);
+              return;
+            }
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: pr.number,
-              body: md
-            })
+              body,
+            });
+            console.log('Created new coverage comment');
 
       - name: Upload coverage report artifact
         uses: actions/upload-artifact@v4
