@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -36,3 +41,166 @@ jobs:
       #- name: Cargo clippy
       #  run: cargo clippy -- -D warnings
       #  if: matrix.toolchain == 'nightly'
+
+  coverage:
+    needs: build_and_test
+    runs-on: ubuntu-latest
+    if: success()
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+
+      - name: Install core sources (kernel needs to rebuild this for target arch)
+        run: rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+
+      - name: Install coverage tooling
+        run: |
+          rustup component add llvm-tools-preview --toolchain nightly-x86_64-unknown-linux-gnu
+          cargo +nightly install cargo-llvm-cov --version 0.8.7 --locked
+
+      - name: Generate HTML code coverage report
+        run: |
+          mkdir -p target/coverage/html
+          CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --json --summary-only --branch --output-path target/coverage/summary.json
+          CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --html --branch --output-dir target/coverage/html
+
+      - name: Get changed files
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              fs.writeFileSync('changed_files.txt', '');
+              console.log('No pull_request payload; wrote empty changed_files.txt');
+              return;
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+
+            const names = files.map(f => f.filename);
+            fs.writeFileSync('changed_files.txt', names.join('\n'));
+            console.log(`Wrote ${names.length} changed files`);
+            console.log('Changed files:\n' + names.join('\n'));
+
+            // also write a JSON file for the parser convenience
+            fs.writeFileSync('changed_files.json', JSON.stringify(names, null, 2));
+
+      - name: Dump changed files (debug)
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "::group::Changed files"
+          sed -n '1,200p' changed_files.txt || true
+          echo "::endgroup::"
+
+      - name: Download baseline coverage artifact from main (if available)
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          OWNER="$(echo "$GITHUB_REPOSITORY" | cut -d/ -f1)"
+          REPO="$(echo "$GITHUB_REPOSITORY" | cut -d/ -f2)"
+          WORKFLOW_NAME="Build the kernel"
+
+          echo "Looking up workflow id for '$WORKFLOW_NAME'..."
+          workflow_id=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/$OWNER/$REPO/actions/workflows" | jq -r ".workflows[] | select(.name==\"$WORKFLOW_NAME\") | .id" | head -n1)
+          if [ -z "$workflow_id" ] || [ "$workflow_id" = "null" ]; then
+            echo "Workflow not found: $WORKFLOW_NAME"
+            exit 0
+          fi
+
+          echo "Finding latest successful run on main for workflow $workflow_id..."
+          run_id=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/$OWNER/$REPO/actions/workflows/$workflow_id/runs?branch=main&status=success&per_page=50" | jq -r '.workflow_runs[0].id // empty')
+          if [ -z "$run_id" ]; then
+            echo "No successful workflow run found on main"
+            exit 0
+          fi
+
+          echo "Found run $run_id — listing artifacts..."
+          artifact_id=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/$OWNER/$REPO/actions/runs/$run_id/artifacts" | jq -r '.artifacts[] | select(.name=="coverage-baseline") | .id' | head -n1)
+          if [ -z "$artifact_id" ]; then
+            echo "No coverage-baseline artifact found in run $run_id"
+            exit 0
+          fi
+
+          download_url="https://api.github.com/repos/$OWNER/$REPO/actions/artifacts/$artifact_id/zip"
+          echo "Downloading artifact from $download_url"
+          curl -sL -H "Authorization: token $GITHUB_TOKEN" -o baseline.zip "$download_url"
+          mkdir -p baseline_artifact
+          unzip -o baseline.zip -d baseline_artifact
+          # copy any summary.json we find inside the artifact
+          find baseline_artifact -type f -name "summary.json" -exec cp {} target/coverage/baseline.json \; || true
+          if [ -f target/coverage/baseline.json ]; then
+            echo "Baseline summary saved to target/coverage/baseline.json"
+          else
+            echo "Baseline summary not found inside artifact"
+          fi
+
+      - name: Create Markdown summary from coverage JSON
+        run: |
+          python3 .github/scripts/coverage_summary.py target/coverage/summary.json coverage_summary.md \
+            --max-rows 50 \
+            --changed-files changed_files.txt \
+            --baseline target/coverage/baseline.json
+
+      - name: Post coverage summary to PR
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const md = fs.existsSync('coverage_summary.md') ? fs.readFileSync('coverage_summary.md', 'utf8') : 'Coverage summary not available.';
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              console.log('Not a pull_request event; skipping comment');
+              return;
+            }
+
+            const marker = '<!-- coverage-report -->';
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              per_page: 100,
+            });
+
+            const existing = comments.data.find(comment => comment.body && comment.body.includes(marker));
+
+            const body = `${marker}\n${md.replace(marker, '').trim()}`;
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              console.log(`Updated existing coverage comment ${existing.id}`);
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body,
+            });
+            console.log('Created new coverage comment');
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: target/coverage/html
