@@ -170,10 +170,30 @@ impl Sub<VirtualAddress> for VirtualAddress {
 }
 
 impl Sub<PhysicalAddress> for PhysicalAddress {
-    type Output = PhysicalAddress;
+    type Output = usize;
 
     fn sub(self, rhs: PhysicalAddress) -> Self::Output {
-        PhysicalAddress(self.0 - rhs.0)
+        (self.0 - rhs.0) as usize
+    }
+}
+
+impl PhysicalAddress {
+    pub fn as_pointer<T>(&self) -> *const T {
+        self.0 as usize as *const T
+    }
+
+    pub fn as_mut_pointer<T>(&self) -> *mut T {
+        self.0 as usize as *mut T
+    }
+}
+
+impl VirtualAddress {
+    pub fn as_pointer<T>(&self) -> *const T {
+        self.0 as usize as *const T
+    }
+
+    pub fn as_mut_pointer<T>(&self) -> *mut T {
+        self.0 as usize as *mut T
     }
 }
 

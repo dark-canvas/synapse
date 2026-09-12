@@ -1,7 +1,15 @@
 use atomic_refcell::AtomicRefCell;
 use thiserror::Error;
+use crate::Address;
 use crate::errors::ErrCode;
 use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
+
+#[cfg(test)]
+use mockall::*;
+#[cfg(test)]
+use mockall::predicate::*;
+#[cfg(test)]
+use std::sync::LazyLock;
 
 pub mod on_demand_array;
 pub mod on_demand_stack;
@@ -27,8 +35,12 @@ pub enum PagerError {
 // - Returns physical, or virtual, or both?
 // - Exposes mapping routines?
 #[allow(dead_code)]
+#[cfg_attr(test, automock)]
 pub trait Pager: Sync {
     fn get_page_size(&self) -> usize;
+    fn get_page_mask(&self) -> Address {
+        (self.get_page_size() - 1) as Address
+    }
     fn get_page_size_log2(&self) -> usize {
         /// Implementations will likely want to override this, as the result is a static number
         let page_size = self.get_page_size();
@@ -92,6 +104,19 @@ impl Pager for NullPager {
 static NULL_PAGER: NullPager = NullPager{};
 pub static PAGER: AtomicRefCell<&dyn Pager> = AtomicRefCell::new( &NULL_PAGER );
 
+#[cfg(not(test))]
 pub fn get_pager() -> &'static dyn Pager {
     *PAGER.borrow()
+}
+
+#[cfg(test)]
+pub static MOCK_PAGER_INSTANCE: LazyLock<MockPager> = LazyLock::new(|| { MockPager::new() } );
+
+// This could be a problem for tests... they run in parallel, and this is a singleton...
+// I could inject it to each consumer, but that's wasteful; an extra pointer which is 
+// technically superfluous.  Not a big deal for big components, but for all the page-based 
+// primitives, it takes up precious space in the page.
+#[cfg(test)]
+pub fn get_pager() -> &'static dyn Pager {
+    &*MOCK_PAGER_INSTANCE
 }
