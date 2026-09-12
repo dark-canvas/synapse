@@ -69,9 +69,18 @@ jobs:
           CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --json --summary-only --branch --output-path target/coverage/summary.json
           CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --html --branch --output-dir target/coverage/html
 
+      - name: Get changed files
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --no-recurse-submodules --depth=1 origin ${{ github.event.pull_request.base.ref }}
+          git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD > changed_files.txt
+          echo "Wrote $(wc -l < changed_files.txt) changed files"
+
       - name: Create Markdown summary from coverage JSON
         run: |
-          python3 .github/scripts/coverage_summary.py target/coverage/summary.json coverage_summary.md --max-rows 50
+          python3 .github/scripts/coverage_summary.py target/coverage/summary.json coverage_summary.md \
+            --max-rows 50 \
+            --changed-files changed_files.txt
 
       - name: Post coverage summary to PR
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository

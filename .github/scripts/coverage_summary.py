@@ -7,9 +7,9 @@ import sys
 
 # map of percent coverage to the colour it should appear as
 COVERAGE_CATEGORIES = {
-   80: "darkgreen",
-   60: "darkorange",
-    0: "darkred",
+   80: "lime",
+   60: "orangered",
+    0: "crimson",
 }
 
 
@@ -24,7 +24,7 @@ def coverage_color_for(value):
     delta = 100
     for percent, colour in COVERAGE_CATEGORIES.items():
         compare_delta = numeric_value - percent
-        if compare_delta > 0 and compare_delta < delta:
+        if compare_delta >= 0 and compare_delta < delta:
             delta = compare_delta
             text_color = colour
 
@@ -56,7 +56,7 @@ def percent_value(summary_obj, key):
         return 0.0
 
 
-def build_markdown(rows):
+def build_markdown(rows, files):
     lines = []
     lines.append("<!-- coverage-report -->")
     lines.append("### Coverage report summary")
@@ -64,7 +64,10 @@ def build_markdown(rows):
     lines.append("| File | Function | Line | Region | Branch |")
     lines.append("| --- | --- | --- | --- | --- |")
     for row in rows:
-        cells = [row[0]] + [styled_cell(cell) for cell in row[1:]]
+        file = row[0]
+        if file in files:
+            file = f"**{file}**"
+        cells = [file] + [styled_cell(cell) for cell in row[1:]]
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
     lines.append("_Full HTML report is attached to the workflow run as an artifact._")
@@ -95,6 +98,13 @@ def parse_coverage_summary(summary_path, max_rows=50):
     rows = sorted(rows, key=lambda row: row[0])[:max_rows]
     return rows
 
+def read_file_list(fname):
+    files = []
+    if fname != "":
+        with open(fname, 'r') as f:
+            files = f.read().splitlines()
+
+    return files
 
 # TODO: compare against previous baseline and show difference?
 # TODO: display summary only for files which have changed in the PR?
@@ -103,6 +113,7 @@ def main():
     parser.add_argument("summary_json", help="Path to the llvm-cov summary JSON file")
     parser.add_argument("output_markdown", help="Path to write the generated Markdown summary")
     parser.add_argument("--max-rows", type=int, default=50, help="Maximum number of rows to include in the markdown table")
+    parser.add_argument("--changed-files", type=str, default="", help="List of files changed in this PR")
     args = parser.parse_args()
 
     if not os.path.exists(args.summary_json):
@@ -114,7 +125,9 @@ def main():
         print("No coverage records found in summary JSON")
         return 0
 
-    markdown = build_markdown(rows)
+    files = read_file_list(args.changed_files)
+
+    markdown = build_markdown(rows, files)
     with open(args.output_markdown, "w", encoding="utf-8") as out:
         out.write(markdown)
 
