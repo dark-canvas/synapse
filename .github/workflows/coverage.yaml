@@ -1,9 +1,9 @@
 name: Code coverage
 
 on:
-  pull_request:
-    # Triggers on PR creation, new commits, and reopenings
-    types: [opened, synchronize, reopened] 
+  workflow_run:
+    workflows: ["Build the kernel"]
+    types: [completed]
 
 permissions:
   contents: read
