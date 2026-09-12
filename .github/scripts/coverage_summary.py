@@ -5,11 +5,14 @@ import json
 import os
 import sys
 
+GOOD_COLOUR = "lime"
+OKAY_COLOUR = "yellow"
+BAD_COLOUR = "orangered"
 # map of percent coverage to the colour it should appear as
 COVERAGE_CATEGORIES = {
-   80: "lime",
-   60: "yellow",
-    0: "orangered",
+   80: GOOD_COLOUR,
+   60: OKAY_COLOUR,
+    0: BAD_COLOUR,
 }
 
 
@@ -45,6 +48,13 @@ def styled_cell(value):
 
     colour = coverage_color_for(numeric_value)
     return f"$$\\color{{{colour}}}\\text{{{value}}}$$"
+
+def styled_percent(value):
+    if value < 0: 
+        return f"$$\\color{{{BAD_COLOUR}}}\\text{{{value:+.1f}\\%}}$$"
+    else:
+        return f"$$\\color{{{GOOD_COLOUR}}}\\text{{{value:+.1f}\\%}}$$"
+
 
 
 def percent_value(summary_obj, key):
@@ -158,22 +168,20 @@ def parse_coverage_summary(summary_path, max_rows=50, changed_files=None, baseli
             display_name = rel_name
             delta_row = None
             if norm_rel in changed_set:
+                display_name = f"**{rel_name}**"
                 base = baseline_map.get(norm_rel)
                 if base:
                     df = functions_pct - base.get('functions', 0.0)
                     dl = lines_pct - base.get('lines', 0.0)
                     dr = regions_pct - base.get('regions', 0.0)
                     db = branches_pct - base.get('branches', 0.0)
-                    display_name = f"**🔷 {rel_name}**"
                     delta_row = [
-                        "Δ vs main",
-                        f"{df:+.1f}pp",
-                        f"{dl:+.1f}pp",
-                        f"{dr:+.1f}pp",
-                        f"{db:+.1f}pp",
+                        "&emsp;&emsp;Δ vs main",
+                        styled_percent(df),
+                        styled_percent(dl),
+                        styled_percent(dr),
+                        styled_percent(db),
                     ]
-                else:
-                    display_name = f"**🔷 {rel_name}**"
 
             row = [
                 display_name,
