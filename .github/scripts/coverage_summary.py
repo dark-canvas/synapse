@@ -62,21 +62,6 @@ def build_markdown(rows, head_totals=None, baseline_totals=None):
     lines.append("### Coverage report summary")
     lines.append("")
 
-    # overall totals table
-    if head_totals:
-        lines.append("| Metric | Base | Head | Delta |")
-        lines.append("| --- | ---: | ---: | ---: |")
-        metrics = ['functions', 'lines', 'regions', 'branches']
-        for m in metrics:
-            head_pct = percent_from_totals(head_totals[m])
-            if baseline_totals:
-                base_pct = percent_from_totals(baseline_totals[m])
-                delta = head_pct - base_pct
-                lines.append(f"| {m.capitalize()} | {base_pct:.1f}% | {head_pct:.1f}% | {delta:+.1f}pp |")
-            else:
-                lines.append(f"| {m.capitalize()} | - | {head_pct:.1f}% | - |")
-        lines.append("")
-
     lines.append("| File | Function | Line | Region | Branch |")
     lines.append("| --- | --- | --- | --- | --- |")
     for row in rows:
@@ -172,18 +157,11 @@ def parse_coverage_summary(summary_path, max_rows=50, changed_files=None, baseli
 
             display_name = rel_name
             if norm_rel in changed_set:
-                # include delta if baseline has the file
-                delta_parts = []
+                # include line delta if baseline has the file
                 base = baseline_map.get(norm_rel)
                 if base:
-                    df = functions_pct - base.get('functions', 0.0)
                     dl = lines_pct - base.get('lines', 0.0)
-                    dr = regions_pct - base.get('regions', 0.0)
-                    db = branches_pct - base.get('branches', 0.0)
-                    # show a concise per-file delta for lines (most useful) in the label
-                    delta_parts.append(f"lines {dl:+.1f}pp")
-                if delta_parts:
-                    display_name = f"**🔷 {rel_name} ({', '.join(delta_parts)})**"
+                    display_name = f"**🔷 {rel_name}** (Δ lines {dl:+.1f}pp)"
                 else:
                     display_name = f"**🔷 {rel_name}**"
 
