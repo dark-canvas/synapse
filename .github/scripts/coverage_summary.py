@@ -7,14 +7,14 @@ import sys
 
 # map of percent coverage to the colour it should appear as
 COVERAGE_CATEGORIES = {
-    80: "DarkGreen",
-    60: "DarkOrange",
-     0: "DarkRed",
+   80: "darkgreen",
+   60: "darkorange",
+    0: "darkred",
 }
 
 
 def coverage_color_for(value):
-   """Return the background colour for a coverage percentage."""
+   """Return the text colour for a coverage percentage."""
    try:
        numeric_value = float(value)
    except (TypeError, ValueError):
@@ -28,11 +28,7 @@ def coverage_color_for(value):
 
 
 def styled_cell(value):
-   """Render a percentage cell as an inline badge image using shields.io.
-
-   GitHub strips style attributes in HTML, so we use an image badge which renders
-   reliably in PR comments. The COVERAGE_CATEGORIES map determines the badge color.
-   """
+   """Render a percentage cell using GitHub KaTeX text colouring."""
    if not isinstance(value, str):
        return str(value)
 
@@ -42,14 +38,7 @@ def styled_cell(value):
        return value
 
    colour = coverage_color_for(numeric_value)
-
-   # Use the shields.io static badge endpoint. Message must be URL-encoded and
-   # '%' must be encoded as %25 for display
-   from urllib.parse import quote_plus
-   message = quote_plus(value)
-   # Build a badge with no label and the percentage as the message
-   badge_url = f"https://img.shields.io/static/v1?label=&message={message}&color={quote_plus(colour)}&style=flat-square"
-   return f"![{value}]({badge_url})"
+   return f"$$\\color{{{colour}}}{{{value}}}$$"
 
 
 def percent_value(summary_obj, key):
