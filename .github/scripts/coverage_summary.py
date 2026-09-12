@@ -9,7 +9,7 @@ import sys
 COVERAGE_CATEGORIES = {
    80: "lime",
    60: "orangered",
-    0: "crimson",
+    0: "red",
 }
 
 
