@@ -66,8 +66,8 @@ jobs:
       - name: Generate HTML code coverage report
         run: |
           mkdir -p target/coverage/html
-          CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --json --summary-only --output-path target/coverage/summary.json
-          CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --html --output-dir target/coverage/html
+          CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --json --summary-only --branch --output-path target/coverage/summary.json
+          CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --html --brnach --output-dir target/coverage/html
 
       - name: Create Markdown summary from coverage JSON
         run: |

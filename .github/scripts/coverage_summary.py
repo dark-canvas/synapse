@@ -5,6 +5,46 @@ import json
 import os
 import sys
 
+# map of percent coverage to the colour it should appear as
+COVERAGE_CATEGORIES = {
+    80: "DarkGreen",
+    60: "DarkOrange",
+     0: "DarkRed",
+}
+
+
+def coverage_color_for(value):
+   """Return the background colour for a coverage percentage."""
+   try:
+       numeric_value = float(value)
+   except (TypeError, ValueError):
+       numeric_value = 0.0
+
+   if numeric_value >= 80:
+       return COVERAGE_CATEGORIES[80]
+   if numeric_value >= 60:
+       return COVERAGE_CATEGORIES[60]
+   return COVERAGE_CATEGORIES[0]
+
+
+def styled_cell(value):
+   """Render a percentage cell with a background colour and white foreground text."""
+   if not isinstance(value, str):
+       return str(value)
+
+   try:
+       numeric_value = float(value.rstrip("%"))
+   except ValueError:
+       return value
+
+   colour = coverage_color_for(numeric_value)
+   return (
+       f'<span style="display: inline-block; background-color: {colour}; '
+       'color: white; padding: 0.15em 0.45em; border-radius: 0.25rem; '
+       'font-weight: 600;">'
+       f'{value}</span>'
+   )
+
 
 def percent_value(summary_obj, key):
     metric = summary_obj.get(key, {}) if isinstance(summary_obj, dict) else {}
@@ -23,7 +63,8 @@ def build_markdown(rows):
     lines.append("| File | Function | Line | Region | Branch |")
     lines.append("| --- | --- | --- | --- | --- |")
     for row in rows:
-        lines.append("| " + " | ".join(row) + " |")
+        cells = [row[0]] + [styled_cell(cell) for cell in row[1:]]
+        lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
     lines.append("_Full HTML report is attached to the workflow run as an artifact._")
     return "\n".join(lines)
@@ -54,6 +95,8 @@ def parse_coverage_summary(summary_path, max_rows=50):
     return rows
 
 
+# TODO: compare against previous baseline and show difference?
+# TODO: display summary only for files which have changed in the PR?
 def main():
     parser = argparse.ArgumentParser(description="Build a Markdown summary from cargo-llvm-cov JSON coverage data.")
     parser.add_argument("summary_json", help="Path to the llvm-cov summary JSON file")
