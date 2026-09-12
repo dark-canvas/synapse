@@ -56,7 +56,7 @@ def percent_value(summary_obj, key):
         return 0.0
 
 
-def build_markdown(rows, files):
+def build_markdown(rows):
     lines = []
     lines.append("<!-- coverage-report -->")
     lines.append("### Coverage report summary")
@@ -64,9 +64,8 @@ def build_markdown(rows, files):
     lines.append("| File | Function | Line | Region | Branch |")
     lines.append("| --- | --- | --- | --- | --- |")
     for row in rows:
+        # first column already contains the display name (may include change marker)
         file = row[0]
-        if file in files:
-            file = f"**{file}**"
         cells = [file] + [styled_cell(cell) for cell in row[1:]]
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
@@ -74,9 +73,18 @@ def build_markdown(rows, files):
     return "\n".join(lines)
 
 
-def parse_coverage_summary(summary_path, max_rows=50):
+def parse_coverage_summary(summary_path, max_rows=50, changed_files=None):
     with open(summary_path, "r", encoding="utf-8") as fh:
         payload = json.load(fh)
+
+    changed_set = set()
+    if changed_files and os.path.exists(changed_files):
+        with open(changed_files, 'r', encoding='utf-8') as cf:
+            for line in cf:
+                line = line.strip()
+                if not line:
+                    continue
+                changed_set.add(os.path.normpath(line))
 
     rows = []
     for entry in payload.get("data", []):
@@ -87,8 +95,13 @@ def parse_coverage_summary(summary_path, max_rows=50):
                 continue
 
             rel_name = os.path.relpath(filename, os.getcwd())
+            norm_rel = os.path.normpath(rel_name)
+            display_name = rel_name
+            if norm_rel in changed_set:
+                display_name = f"**🔷 {rel_name}**"
+
             rows.append([
-                rel_name,
+                display_name,
                 f"{percent_value(summary, 'functions'):.1f}%",
                 f"{percent_value(summary, 'lines'):.1f}%",
                 f"{percent_value(summary, 'regions'):.1f}%",
@@ -120,14 +133,12 @@ def main():
         print(f"Coverage summary JSON not found: {args.summary_json}", file=sys.stderr)
         return 0
 
-    rows = parse_coverage_summary(args.summary_json, max_rows=args.max_rows)
+    rows = parse_coverage_summary(args.summary_json, max_rows=args.max_rows, changed_files=args.changed_files)
     if not rows:
         print("No coverage records found in summary JSON")
         return 0
 
-    files = read_file_list(args.changed_files)
-
-    markdown = build_markdown(rows, files)
+    markdown = build_markdown(rows)
     with open(args.output_markdown, "w", encoding="utf-8") as out:
         out.write(markdown)
 
