@@ -117,6 +117,8 @@ def read_file_list(fname):
         with open(fname, 'r') as f:
             files = f.read().splitlines()
 
+    print(f"files: {files}")
+
     return files
 
 # TODO: compare against previous baseline and show difference?
