@@ -174,7 +174,6 @@ def parse_coverage_summary(summary_path, max_rows=50, changed_files=None, baseli
                     ]
                 else:
                     display_name = f"**🔷 {rel_name}**"
-                    delta_row = ["Δ vs main", "—", "—", "—", "—"]
 
             row = [
                 display_name,
