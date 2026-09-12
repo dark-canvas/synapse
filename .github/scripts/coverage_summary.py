@@ -28,7 +28,11 @@ def coverage_color_for(value):
 
 
 def styled_cell(value):
-   """Render a percentage cell with a background colour and white foreground text."""
+   """Render a percentage cell as an inline badge image using shields.io.
+
+   GitHub strips style attributes in HTML, so we use an image badge which renders
+   reliably in PR comments. The COVERAGE_CATEGORIES map determines the badge color.
+   """
    if not isinstance(value, str):
        return str(value)
 
@@ -38,12 +42,14 @@ def styled_cell(value):
        return value
 
    colour = coverage_color_for(numeric_value)
-   return (
-       f'<span style="display: inline-block; background-color: {colour}; '
-       'color: white; padding: 0.15em 0.45em; border-radius: 0.25rem; '
-       'font-weight: 600;">'
-       f'{value}</span>'
-   )
+
+   # Use the shields.io static badge endpoint. Message must be URL-encoded and
+   # '%' must be encoded as %25 for display
+   from urllib.parse import quote_plus
+   message = quote_plus(value)
+   # Build a badge with no label and the percentage as the message
+   badge_url = f"https://img.shields.io/static/v1?label=&message={message}&color={quote_plus(colour)}&style=flat-square"
+   return f"![{value}]({badge_url})"
 
 
 def percent_value(summary_obj, key):
