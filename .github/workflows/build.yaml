@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   issues: write
+  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -65,87 +66,64 @@ jobs:
       - name: Generate HTML code coverage report
         run: |
           mkdir -p target/coverage/html
+          CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --json --summary-only --output-path target/coverage/summary.json
           CARGO_TARGET_DIR=target/coverage cargo +nightly llvm-cov --target x86_64-unknown-linux-gnu --html --output-dir target/coverage/html
 
-      - name: Create Markdown summary from HTML report
+      - name: Create Markdown summary from coverage JSON
         run: |
           python3 - <<'PY'
-          from html.parser import HTMLParser
+          import json, os
           import sys
-          p = 'target/coverage/html/index.html'
-          class T(HTMLParser):
-              def __init__(self):
-                  super().__init__()
-                  self.tables = []
-                  self.in_table = False
-                  self.in_tr = False
-                  self.in_td = False
-                  self.current_cell = ''
-                  self.current_row = []
-                  self.current_table = []
-              def handle_starttag(self, tag, attrs):
-                  if tag == 'table':
-                      self.in_table = True
-                      self.current_table = []
-                  if self.in_table and tag == 'tr':
-                      self.in_tr = True
-                      self.current_row = []
-                  if self.in_tr and tag in ('td','th'):
-                      self.in_td = True
-                      self.current_cell = ''
-              def handle_endtag(self, tag):
-                  if tag in ('td','th') and self.in_td:
-                      self.in_td = False
-                      self.current_row.append(self.current_cell.strip())
-                  if tag == 'tr' and self.in_tr:
-                      self.in_tr = False
-                      if self.current_row:
-                          self.current_table.append(self.current_row)
-                  if tag == 'table' and self.in_table:
-                      self.in_table = False
-                      self.tables.append(self.current_table)
-              def handle_data(self, data):
-                  if self.in_td:
-                      self.current_cell += data
-          try:
-              html = open(p,'r',encoding='utf-8').read()
-          except FileNotFoundError:
-              print('index.html not found at', p)
+
+          summary_path = 'target/coverage/summary.json'
+          if not os.path.exists(summary_path):
+              print('Coverage summary JSON not found', summary_path)
               sys.exit(0)
-          parser = T()
-          parser.feed(html)
-          # Find a table that looks like the per-file coverage table by header
-          table = None
-          for t in parser.tables:
-              if not t: continue
-              header = [c.lower() for c in t[0]]
-              if any(h in header for h in ('function','file','filename')) and any(h in header for h in ('line','region','branch')):
-                  table = t
-                  break
-          if not table:
-              print('No suitable coverage table found')
+
+          with open(summary_path, 'r', encoding='utf-8') as fh:
+              data = json.load(fh)
+
+          rows = []
+          for entry in data.get('data', []):
+              for file in entry.get('files', []):
+                  filename = file.get('filename') or file.get('file') or file.get('path')
+                  summary = file.get('summary') or {}
+                  if not filename or not isinstance(summary, dict):
+                      continue
+                  functions = summary.get('functions', {})
+                  lines = summary.get('lines', {})
+                  regions = summary.get('regions', {})
+                  branches = summary.get('branches', {})
+                  rows.append([
+                      os.path.relpath(filename, os.getcwd()),
+                      f"{functions.get('percent', 0.0):.1f}%",
+                      f"{lines.get('percent', 0.0):.1f}%",
+                      f"{regions.get('percent', 0.0):.1f}%",
+                      f"{branches.get('percent', 0.0):.1f}%",
+                  ])
+
+          if not rows:
+              print('No coverage records found in summary JSON')
               sys.exit(0)
-          # Build markdown
+
+          rows = sorted(rows, key=lambda r: r[0])[:50]
           md = []
           md.append('<!-- coverage-report -->')
           md.append('### Coverage report summary')
           md.append('')
-          # Use the header row
-          hdr = table[0]
-          md.append('| ' + ' | '.join(hdr) + ' |')
-          md.append('| ' + ' | '.join(['---']*len(hdr)) + ' |')
-          for row in table[1:51]:  # limit to first 50 rows to avoid huge comments
-              # normalize whitespace
-              row = [r.replace('\n',' ').strip() for r in row]
+          md.append('| File | Function | Line | Region | Branch |')
+          md.append('| --- | --- | --- | --- | --- |')
+          for row in rows:
               md.append('| ' + ' | '.join(row) + ' |')
           md.append('')
           md.append('_Full HTML report is attached to the workflow run as an artifact._')
-          open('coverage_summary.md','w',encoding='utf-8').write('\n'.join(md))
+          with open('coverage_summary.md', 'w', encoding='utf-8') as out:
+              out.write('\n'.join(md))
           print('Wrote coverage_summary.md')
           PY
 
       - name: Post coverage summary to PR
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/github-script@v6
         with:
           script: |
