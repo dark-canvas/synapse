@@ -49,11 +49,16 @@ def styled_cell(value):
     colour = coverage_color_for(numeric_value)
     return f"$$\\color{{{colour}}}\\text{{{value}}}$$"
 
-def styled_percent(value):
-    if value < 0: 
-        return f"$$\\color{{{BAD_COLOUR}}}\\text{{{value:+.1f}\\%}}$$"
+def styled_percent(existing, change):
+
+    if change < 0: 
+        colour = BAD_COLOUR
+    elif change > 1: 
+        colour = GOOD_COLOUR
     else:
-        return f"$$\\color{{{GOOD_COLOUR}}}\\text{{{value:+.1f}\\%}}$$"
+        colour = coverage_color_for(existing)
+
+    return f"$$\\color{{{colour}}}\\text{{{change:+.1f}\\%}}$$"
 
 
 
@@ -160,10 +165,10 @@ def parse_coverage_summary(summary_path, max_rows=50, changed_files=None, baseli
 
             rel_name = os.path.relpath(filename, os.getcwd())
             norm_rel = os.path.normpath(rel_name)
-            functions_pct = percent_value(summary, 'functions')
-            lines_pct = percent_value(summary, 'lines')
-            regions_pct = percent_value(summary, 'regions')
-            branches_pct = percent_value(summary, 'branches')
+            coverage_functions = percent_value(summary, 'functions')
+            converage_lines = percent_value(summary, 'lines')
+            coverage_regions = percent_value(summary, 'regions')
+            coverage_branches = percent_value(summary, 'branches')
 
             display_name = rel_name
             delta_row = None
@@ -171,24 +176,24 @@ def parse_coverage_summary(summary_path, max_rows=50, changed_files=None, baseli
                 display_name = f"**{rel_name}**"
                 base = baseline_map.get(norm_rel)
                 if base:
-                    df = functions_pct - base.get('functions', 0.0)
-                    dl = lines_pct - base.get('lines', 0.0)
-                    dr = regions_pct - base.get('regions', 0.0)
-                    db = branches_pct - base.get('branches', 0.0)
+                    delta_functions = coverage_functions - base.get('functions', 0.0)
+                    delta_lines = converage_lines - base.get('lines', 0.0)
+                    delta_regions = coverage_regions - base.get('regions', 0.0)
+                    delta_branches = coverage_branches - base.get('branches', 0.0)
                     delta_row = [
                         "&emsp;&emsp;Δ vs main",
-                        styled_percent(df),
-                        styled_percent(dl),
-                        styled_percent(dr),
-                        styled_percent(db),
+                        styled_percent(coverage_functions, delta_functions),
+                        styled_percent(converage_lines, delta_lines),
+                        styled_percent(coverage_regions, delta_regions),
+                        styled_percent(coverage_branches, delta_branches),
                     ]
 
             row = [
                 display_name,
-                f"{functions_pct:.1f}%",
-                f"{lines_pct:.1f}%",
-                f"{regions_pct:.1f}%",
-                f"{branches_pct:.1f}%",
+                f"{coverage_functions:.1f}%",
+                f"{converage_lines:.1f}%",
+                f"{coverage_regions:.1f}%",
+                f"{coverage_branches:.1f}%",
             ]
             grouped_rows.append((norm_rel, row))
             if delta_row is not None:
