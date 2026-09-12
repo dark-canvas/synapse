@@ -22,7 +22,7 @@ def coverage_color_for(value):
 
     text_color = "white"
     delta = 100
-    for percent, colour in COVERAGE_CATEGORIES:
+    for percent, colour in COVERAGE_CATEGORIES.items():
         compare_delta = numeric_value - percent
         if compare_delta > 0 and compare_delta < delta:
             delta = compare_delta
