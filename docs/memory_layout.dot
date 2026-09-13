@@ -1,0 +1,15 @@
+digraph structs {
+    node [shape=record];
+    rankdir=LR;
+    memory [label="\
+      <kernel>    kernel\n0xFFFFFF8000000000|\
+      <kstack>    kernel stack (2MB + 2MB)|\
+      <asbmap>    App Stack bitmap (4M)|\
+      <physm>     physical mirror\n0xFFFFFF0000000000|\
+      <appkstack> App Kernel Stacks (16kb x 32mb)\nFFFFFE8000000000|\
+      ...|\
+      <apps>      applications\n0x0000000000000000"];
+    
+    memory:asbmap -> memory:appkstack
+    memory:appkstack -> memory:apps
+}

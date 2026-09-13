@@ -1,0 +1,446 @@
+(gdb) set print pretty on
+(gdb) p stack_frame
+$2 = x86_64::structures::idt::InterruptStackFrame (
+  x86_64::structures::idt::InterruptStackFrameValue {
+    instruction_pointer: x86_64::addr::VirtAddr (
+      18446743523953832291
+    ),
+    code_segment: x86_64::registers::segmentation::SegmentSelector (
+      8
+    ),
+    _reserved1: [0, 0, 0, 0, 0, 0],
+    cpu_flags: x86_64::registers::rflags::RFlags (
+      x86_64::registers::rflags::_::InternalBitFlags (
+        658
+      )
+    ),
+    stack_pointer: x86_64::addr::VirtAddr (
+      18446743523953735452
+    ),
+    stack_segment: x86_64::registers::segmentation::SegmentSelector (
+      16
+    ),
+    _reserved2: [0, 0, 0, 0, 0, 0]
+  }
+)
+(gdb) p/x stack_frame
+$3 = x86_64::structures::idt::InterruptStackFrame (
+  x86_64::structures::idt::InterruptStackFrameValue {
+    instruction_pointer: x86_64::addr::VirtAddr (
+      0xffffff8000017163
+    ),
+    code_segment: x86_64::registers::segmentation::SegmentSelector (
+      0x8
+    ),
+    _reserved1: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+    cpu_flags: x86_64::registers::rflags::RFlags (
+      x86_64::registers::rflags::_::InternalBitFlags (
+        0x292
+      )
+    ),
+    stack_pointer: x86_64::addr::VirtAddr (
+      0xffffff7ffffff71c
+    ),
+    stack_segment: x86_64::registers::segmentation::SegmentSelector (
+      0x10
+    ),
+    _reserved2: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+  }
+)
+(gdb) info registers
+rax            0x20                32
+rbx            0x0                 0
+rcx            0xffffff7ffffff768  -549755816088
+rdx            0xffffff80000303f8  -549755616264
+rsi            0x20                32
+rdi            0x80b               2059
+rbp            0x7fe96880          0x7fe96880
+rsp            0xffffff7ffffff690  0xffffff7ffffff690
+r8             0xc                 12
+r9             0xffffff800003ae70  -549755572624
+r10            0x0                 0
+r11            0x1                 1
+r12            0x0                 0
+r13            0x7ed8d000          2128138240
+r14            0x0                 0
+r15            0x7feaf9e0          2146105824
+rip            0xffffff8000003b77  0xffffff8000003b77 <kernel::arch::x86_64::pit::timer_interrupt_handler+23>
+eflags         0x86                [ IOPL=0 SF PF ]
+cs             0x8                 8
+ss             0x10                16
+ds             0x10                16
+es             0x10                16
+fs             0x10                16
+--Type <RET> for more, q to quit, c to continue without paging--c
+gs             0x10                16
+fs_base        0x0                 0
+gs_base        0x0                 0
+k_gs_base      0x0                 0
+cr0            0x80010033          [ PG WP NE ET MP PE ]
+cr2            0x0                 0
+cr3            0x7e4db000          [ PDBR=517339 PCID=0 ]
+cr4            0x668               [ OSXMMEXCPT OSFXSR MCE PAE DE ]
+cr8            0x0                 0
+efer           0xd00               [ NXE LMA LME ]
+xmm0           vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm1           vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm2           vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm3           vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm4           vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm5           vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm6           vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm7           vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm8           vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm9           vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm10          vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm11          vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm12          vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm13          vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm14          vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+xmm15          vec128 {
+  v4_float: [0x0, 0x0, 0x0, 0x0],
+  v2_double: [0x0, 0x0],
+  v16_int8: [0x0 <repeats 16 times>],
+  v8_int16: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+  v4_int32: [0x0, 0x0, 0x0, 0x0],
+  v2_int64: [0x0, 0x0],
+  uint128: 0x0
+}
+mxcsr          0x1f80              [ IM DM ZM OM UM PM ]
+(gdb) x/10g $rsp
+0xffffff7ffffff690:	0xffffff800003d7af	0xffffff800003d7ac
+0xffffff7ffffff6a0:	0x0000000000000020	0xffffff7ffffff768
+0xffffff7ffffff6b0:	0xffffff80000303f8	0x0000000000000020
+0xffffff7ffffff6c0:	0x00000000000003f8	0x000000000000000c
+0xffffff7ffffff6d0:	0xffffff800003ae70	0x0000000000000000
+(gdb) p stack_frame.stack_pointer
+There is no member named stack_pointer.
+(gdb) p stack_frame
+$4 = x86_64::structures::idt::InterruptStackFrame (
+  x86_64::structures::idt::InterruptStackFrameValue {
+    instruction_pointer: x86_64::addr::VirtAddr (
+      18446743523953832291
+    ),
+    code_segment: x86_64::registers::segmentation::SegmentSelector (
+      8
+    ),
+    _reserved1: [0, 0, 0, 0, 0, 0],
+    cpu_flags: x86_64::registers::rflags::RFlags (
+      x86_64::registers::rflags::_::InternalBitFlags (
+        658
+      )
+    ),
+    stack_pointer: x86_64::addr::VirtAddr (
+      18446743523953735452
+    ),
+    stack_segment: x86_64::registers::segmentation::SegmentSelector (
+      16
+    ),
+    _reserved2: [0, 0, 0, 0, 0, 0]
+  }
+)
+(gdb) p stack_frame.__0.
+_reserved1           _reserved2           code_segment         cpu_flags            instruction_pointer  stack_pointer        stack_segment
+(gdb) p stack_frame.__0.stack_pointer
+$5 = x86_64::addr::VirtAddr (
+  18446743523953735452
+)
+(gdb) p/x stack_frame.__0.stack_pointer
+$6 = x86_64::addr::VirtAddr (
+  0xffffff7ffffff71c
+)
+(gdb) x/2g stack_frame.__0.stack_pointer
+Value can't be converted to integer.
+(gdb) x/2g stack_frame.__0.stack_pointer.__0
+0xffffff7ffffff71c:	0x0000385b202003f8	0xfffff768ffffff80
+(gdb) x/3g stack_frame.__0.stack_pointer.__0
+0xffffff7ffffff71c:	0x0000385b202003f8	0xfffff768ffffff80
+0xffffff7ffffff72c:	0xfffff766ffffff7f
+(gdb) x/3g stack_frame.__0.stack_pointer.__0 - 8
+0xffffff7ffffff714:	0x0003d7acffffff80	0x0000385b202003f8
+0xffffff7ffffff724:	0xfffff768ffffff80
+(gdb) x/3g stack_frame.__0.stack_pointer.__0 - 16
+0xffffff7ffffff70c:	0x0003d7ac00000000	0x0003d7acffffff80
+0xffffff7ffffff71c:	0x0000385b202003f8
+(gdb) x/3g stack_frame.__0.stack_pointer.__0 - 24
+0xffffff7ffffff704:	0x00000010ffffff7f	0x0003d7ac00000000
+0xffffff7ffffff714:	0x0003d7acffffff80
+(gdb) p stack_frmae
+No symbol 'stack_frmae' in current context
+(gdb) p stack_frame
+$7 = x86_64::structures::idt::InterruptStackFrame (
+  x86_64::structures::idt::InterruptStackFrameValue {
+    instruction_pointer: x86_64::addr::VirtAddr (
+      18446743523953832291
+    ),
+    code_segment: x86_64::registers::segmentation::SegmentSelector (
+      8
+    ),
+    _reserved1: [0, 0, 0, 0, 0, 0],
+    cpu_flags: x86_64::registers::rflags::RFlags (
+      x86_64::registers::rflags::_::InternalBitFlags (
+        658
+      )
+    ),
+    stack_pointer: x86_64::addr::VirtAddr (
+      18446743523953735452
+    ),
+    stack_segment: x86_64::registers::segmentation::SegmentSelector (
+      16
+    ),
+    _reserved2: [0, 0, 0, 0, 0, 0]
+  }
+)
+(gdb) p/x stack_frame
+$8 = x86_64::structures::idt::InterruptStackFrame (
+  x86_64::structures::idt::InterruptStackFrameValue {
+    instruction_pointer: x86_64::addr::VirtAddr (
+      0xffffff8000017163
+    ),
+    code_segment: x86_64::registers::segmentation::SegmentSelector (
+      0x8
+    ),
+    _reserved1: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+    cpu_flags: x86_64::registers::rflags::RFlags (
+      x86_64::registers::rflags::_::InternalBitFlags (
+        0x292
+      )
+    ),
+    stack_pointer: x86_64::addr::VirtAddr (
+      0xffffff7ffffff71c
+    ),
+    stack_segment: x86_64::registers::segmentation::SegmentSelector (
+      0x10
+    ),
+    _reserved2: [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+  }
+)
+(gdb) x/3g stack_frame.__0.stack_pointer.__0
+0xffffff7ffffff71c:	0x0000385b202003f8	0xfffff768ffffff80
+0xffffff7ffffff72c:	0xfffff766ffffff7f
+(gdb) x/10g stack_frame.__0.stack_pointer.__0
+0xffffff7ffffff71c:	0x0000385b202003f8	0xfffff768ffffff80
+0xffffff7ffffff72c:	0xfffff766ffffff7f	0xfffff768ffffff7f
+0xffffff7ffffff73c:	0x0000a64a20ffff7f	0xfffff6f0ffffff80
+0xffffff7ffffff74c:	0x0003d7a300ffff7f	0x0000000cffffff80
+0xffffff7ffffff75c:	0x0002d16c00000000	0x0003d7ad03f8ff80
+(gdb) x/10g stack_frame.__0.stack_pointer.__0 - 32
+0xffffff7ffffff6fc:	0xfffff71c00000000	0x00000010ffffff7f
+0xffffff7ffffff70c:	0x0003d7ac00000000	0x0003d7acffffff80
+0xffffff7ffffff71c:	0x0000385b202003f8	0xfffff768ffffff80
+0xffffff7ffffff72c:	0xfffff766ffffff7f	0xfffff768ffffff7f
+0xffffff7ffffff73c:	0x0000a64a20ffff7f	0xfffff6f0ffffff80
+(gdb) p $rsp
+$9 = (*mut ()) 0xffffff7ffffff690
+(gdb) p stack_frame.__0.stack_pointer.__0
+$10 = 18446743523953735452
+(gdb) p/x stack_frame.__0.stack_pointer.__0
+$11 = 0xffffff7ffffff71c
+(gdb) p $11 - $9
+Argument to arithmetic operation not a number or boolean.
+(gdb) p 0xffffff7ffffff71c - 0xffffff7ffffff690
+$12 = 140
+(gdb) p $12 / 8
+$13 = 17
+(gdb) x/20g $rsp - (20*8)
+0xffffff7ffffff5f0:	0xffffff800003d7a3	0x000000000000000c
+0xffffff7ffffff600:	0xffffff800003d7af	0x0000000060000020
+0xffffff7ffffff610:	0xffffff800002dda6	0x0001ff7f00000000
+0xffffff7ffffff620:	0xffffff800003d7a3	0x000000000000000c
+0xffffff7ffffff630:	0x0000000000000001	0xffffff800003d7a3
+0xffffff7ffffff640:	0x000000000000000c	0x0000000000000001
+0xffffff7ffffff650:	0xffffff800002dd42	0xffffff7ffffff898
+0xffffff7ffffff660:	0xffffff800003a9c0	0xffffff800003d7a3
+0xffffff7ffffff670:	0x000000000000000c	0x0000000000000001
+0xffffff7ffffff680:	0xffffff7ffffff6c8	0xffffff7ffffff6d0
+(gdb) x/20g $rsp + (20*8)
+0xffffff7ffffff730:	0xffffff7ffffff766	0x20ffff7ffffff768
+0xffffff7ffffff740:	0xffffff800000a64a	0x00ffff7ffffff6f0
+0xffffff7ffffff750:	0xffffff800003d7a3	0x000000000000000c
+0xffffff7ffffff760:	0x03f8ff800002d16c	0xffffff800003d7ad
+0xffffff7ffffff770:	0xffffff800003d7af	0x200100000000000c
+0xffffff7ffffff780:	0xffffff7ffffffb77	0xffffff800003d7a3
+0xffffff7ffffff790:	0x000000000000000c	0x200000000000000c
+0xffffff7ffffff7a0:	0xffffff8000022045	0xffffff8000050a58
+0xffffff7ffffff7b0:	0x0000000000000001	0x0000000000000001
+0xffffff7ffffff7c0:	0xffffff7ffffffc58	0x0000000000000013
+(gdb) x/20g $rsp + (24*8)
+0xffffff7ffffff750:	0xffffff800003d7a3	0x000000000000000c
+0xffffff7ffffff760:	0x03f8ff800002d16c	0xffffff800003d7ad
+0xffffff7ffffff770:	0xffffff800003d7af	0x200100000000000c
+0xffffff7ffffff780:	0xffffff7ffffffb77	0xffffff800003d7a3
+0xffffff7ffffff790:	0x000000000000000c	0x200000000000000c
+0xffffff7ffffff7a0:	0xffffff8000022045	0xffffff8000050a58
+0xffffff7ffffff7b0:	0x0000000000000001	0x0000000000000001
+0xffffff7ffffff7c0:	0xffffff7ffffffc58	0x0000000000000013
+0xffffff7ffffff7d0:	0x01ffff800002d3e4	0xffffff8000037fd0
+0xffffff7ffffff7e0:	0x0c00000000000013	0xffffff7ffffffc58
+(gdb) x/20g $rsp
+0xffffff7ffffff690:	0xffffff800003d7af	0xffffff800003d7ac
+0xffffff7ffffff6a0:	0x0000000000000020	0xffffff7ffffff768
+0xffffff7ffffff6b0:	0xffffff80000303f8	0x0000000000000020
+0xffffff7ffffff6c0:	0x00000000000003f8	0x000000000000000c
+0xffffff7ffffff6d0:	0xffffff800003ae70	0x0000000000000000
+0xffffff7ffffff6e0:	0x0000000000000001	0xffffff8000017163
+0xffffff7ffffff6f0:	0x0000000000000008	0x0000000000000292
+0xffffff7ffffff700:	0xffffff7ffffff71c	0x0000000000000010
+0xffffff7ffffff710:	0xffffff800003d7ac	0x202003f80003d7ac
+0xffffff7ffffff720:	0xffffff800000385b	0xffffff7ffffff768
+(gdb) x/30g $rsp
+0xffffff7ffffff690:	0xffffff800003d7af	0xffffff800003d7ac
+0xffffff7ffffff6a0:	0x0000000000000020	0xffffff7ffffff768
+0xffffff7ffffff6b0:	0xffffff80000303f8	0x0000000000000020
+0xffffff7ffffff6c0:	0x00000000000003f8	0x000000000000000c
+0xffffff7ffffff6d0:	0xffffff800003ae70	0x0000000000000000
+0xffffff7ffffff6e0:	0x0000000000000001	0xffffff8000017163
+0xffffff7ffffff6f0:	0x0000000000000008	0x0000000000000292
+0xffffff7ffffff700:	0xffffff7ffffff71c	0x0000000000000010
+0xffffff7ffffff710:	0xffffff800003d7ac	0x202003f80003d7ac
+0xffffff7ffffff720:	0xffffff800000385b	0xffffff7ffffff768
+0xffffff7ffffff730:	0xffffff7ffffff766	0x20ffff7ffffff768
+0xffffff7ffffff740:	0xffffff800000a64a	0x00ffff7ffffff6f0
+0xffffff7ffffff750:	0xffffff800003d7a3	0x000000000000000c
+0xffffff7ffffff760:	0x03f8ff800002d16c	0xffffff800003d7ad
+0xffffff7ffffff770:	0xffffff800003d7af	0x200100000000000c
+(gdb) p &stack_frame
+$14 = (*mut x86_64::structures::idt::InterruptStackFrame) 0xffffff7ffffff6e8
+(gdb)
+
+
+Just before returning from interrupt:
+   0xffffff8000003b8e <_RNvNtNtNtCsi52B0HrtGib_6kernel4arch6x86_643pit23timer_interrupt_handler+46>:	48 83 c4 10        	add    $0x10,%rsp
+   0xffffff8000003b92 <_RNvNtNtNtCsi52B0HrtGib_6kernel4arch6x86_643pit23timer_interrupt_handler+50>:	58                 	pop    %rax
+   0xffffff8000003b93 <_RNvNtNtNtCsi52B0HrtGib_6kernel4arch6x86_643pit23timer_interrupt_handler+51>:	59                 	pop    %rcx
+   0xffffff8000003b94 <_RNvNtNtNtCsi52B0HrtGib_6kernel4arch6x86_643pit23timer_interrupt_handler+52>:	5a                 	pop    %rdx
+   0xffffff8000003b95 <_RNvNtNtNtCsi52B0HrtGib_6kernel4arch6x86_643pit23timer_interrupt_handler+53>:	5e                 	pop    %rsi
+   0xffffff8000003b96 <_RNvNtNtNtCsi52B0HrtGib_6kernel4arch6x86_643pit23timer_interrupt_handler+54>:	5f                 	pop    %rdi
+   0xffffff8000003b97 <_RNvNtNtNtCsi52B0HrtGib_6kernel4arch6x86_643pit23timer_interrupt_handler+55>:	41 58              	pop    %r8
+   0xffffff8000003b99 <_RNvNtNtNtCsi52B0HrtGib_6kernel4arch6x86_643pit23timer_interrupt_handler+57>:	41 59              	pop    %r9
+   0xffffff8000003b9b <_RNvNtNtNtCsi52B0HrtGib_6kernel4arch6x86_643pit23timer_interrupt_handler+59>:	41 5a              	pop    %r10
+   0xffffff8000003b9d <_RNvNtNtNtCsi52B0HrtGib_6kernel4arch6x86_643pit23timer_interrupt_handler+61>:	41 5b              	pop    %r11
+=> 0xffffff8000003b9f <_RNvNtNtNtCsi52B0HrtGib_6kernel4arch6x86_643pit23timer_interrupt_handler+63>:	48 cf              	iretq
+(gdb) p $rsp
+$15 = (*mut ()) 0xffffff7ffffff6e8
+
+NOTE!!! This matches the value of &stack_frame above!!!
+So grabbing a mutable handle will allow me to modify where the frame returns from!

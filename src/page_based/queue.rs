@@ -2,10 +2,10 @@ use crate::page_based::node_allocator::NodeAllocator;
 use crate::errors::ErrCode;
 use crate::pager::Pager;
 
-pub struct Queue<T: Copy> {
+pub struct Queue<'a, T: Copy> {
     head: Option<*mut LinkNode<T>>,
     tail: Option<*mut LinkNode<T>>,
-    allocator: NodeAllocator<LinkNode<T>>,
+    allocator: NodeAllocator<'a, LinkNode<T>>,
 }
 
 struct LinkNode<T: Copy> {
@@ -13,18 +13,18 @@ struct LinkNode<T: Copy> {
     next: Option<*mut LinkNode<T>>,
 }
 
-impl<T: Copy> Queue<T> {
-    pub fn new(pager: &'static dyn Pager) -> &'static mut Self {
-        // The backing storage lives at a fixed virtual address for the lifetime
-        // of the kernel, so this reference is permanently valid.
+impl<'a, T: Copy> Queue<'a, T> {
+    pub fn new(pager: &'a dyn Pager) -> &'a mut Self {
+        // The backing storage lives in a virtual page provided by the pager and must
+        // outlive the returned queue reference. Tie the queue lifetime to the pager's.
         let phys_page = pager.allocate_physical().unwrap();
         let virt_page = pager.get_virtual_address(phys_page).unwrap();
 
-        let queue: &'static mut Self = virt_page.as_mut_reference::<Self>();
+        let queue: &'a mut Self = virt_page.as_mut_reference::<Self>();
         queue.head = None;
         queue.tail = None;
         queue.allocator = NodeAllocator::new(pager);
-        queue.allocator.use_page(phys_page, core::mem::size_of::<Self>());
+        queue.allocator.use_page(phys_page, core::mem::size_of::<Self>()).unwrap();
 
         queue
     }
@@ -89,7 +89,10 @@ mod tests {
 
     #[test]
     fn test_create_queue() {
-        let mock_pager = Box::leak(Box::new(MockPager::new()));
+        // The API previously required a 'static pager; change allows the pager to simply
+        // outlive the queue. Use a local mock pager and drop the queue before mutably
+        // using the pager (e.g., calling checkpoint).
+        let mut mock_pager = MockPager::new();
 
         mock_pager.expect_get_page_size().returning(|| 4096);
         mock_pager.expect_get_page_mask().returning(|| 4095);
@@ -97,7 +100,7 @@ mod tests {
             .times(1)
             .returning(|| Ok(PhysicalAddress(0x1000)));
 
-        let backing_store = Box::leak(Box::new([0u8; 4096]));
+        let backing_store = Box::new([0u8; 4096]);
         let virt_addr = VirtualAddress(backing_store.as_ptr() as usize as crate::Address);
 
         mock_pager.expect_get_virtual_address()
@@ -123,11 +126,15 @@ mod tests {
                 .returning(move |_| Ok(virt_addr + node_addr));
         }
 
-        let queue = Queue::<BigSampleItem>::new(mock_pager);
+        // create the queue borrowing from mock_pager
+        let queue = Queue::<BigSampleItem>::new(&mock_pager);
 
         assert_eq!(queue as *const _ as Address, virt_addr.0);
         
-        // I can't do this because mock_pager is borrowed for 'static already (above)!
-        //mock_pager.checkpoint();
+        // drop the queue so the pager can be used mutably afterwards
+        drop(queue);
+
+        // now it's possible to mutably borrow the mock pager to checkpoint or assert expectations
+        mock_pager.checkpoint();
     }
 }

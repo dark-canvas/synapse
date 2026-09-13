@@ -1,0 +1,91 @@
+(gdb) p/x pager.stack_2mb.inner.data.value
+$8 = (
+  kernel::pager::page_stack::PageStack<2097152> {
+    available_pages: kernel::stack::Stack<u64, true> {
+      size: 0x40000,
+      base: <error reading variable: Cannot access memory at address 0xffffffe000002000>,
+      pointer: 0x2f9
+    },
+    aggregate_map: kernel::pager::address_aggregator::PageAggregator<1073741824> {
+      aggregate_map: &mut [kernel::pager::address_aggregator::PageBucket] [
+        kernel::pager::address_aggregator::PageBucket {
+          allocated: 0x0,
+          available: 0x1fc
+        }, kernel::pager::address_aggregator::PageBucket {
+--Type <RET> for more, q to quit, c to continue without paging--
+          allocated: 0x0,
+          available: 0xfd
+        }, kernel::pager::address_aggregator::PageBucket {
+          allocated: 0x0,
+          available: 0x0
+        } <repeats 510 times>]
+    }
+  },
+  0xffffffe000002000
+)
+
+
+(gdb) p/x *config.raw_data
+$4 = satus_struct::config::ConfigPage {framebuffer_addr: 0x80000000, framebuffer_size: 0x3e8000, framebuffer_width: 0x500, framebuffer_height: 0x320, framebuffer_red_mask: 0xff, framebuffer_green_mask: 0xff00, framebuffer_blue_mask: 0xff0000, framebuffer_bytes_per_line: 0x500, module_list_addr: 0x7e23e000, total_pages: 0x0, memory_map_addr: 0x7ea6b000}
+
+
+(gdb) p framebuffer
+$5 = (*mut u8) 0x80000000
+(gdb) print_
+print_address_indices  print_page_table       print_pl4_table        print_table_index
+(gdb) print_address_indices 0x80000000
+0x80000000 -> 0, 2, 0, 0
+entry = 0x7fc02023 addr = 0x7fc02000 flags = 0x23 ( P RW A )
+entry = 0x7fc05023 addr = 0x7fc05000 flags = 0x23 ( P RW A )
+entry = 0x7fc04000 addr = 0x7fc04000 flags = 0x0 ( )
+entry = 0x7fc03000 addr = 0x7fc03000 flags = 0x0 ( )
+
+(gdb) print_address_indices 0x80000000
+0x80000000 -> 0, 2, 0, 0
+entry = 0x7fc02023 addr = 0x7fc02000 flags = 0x23 ( P RW A )
+entry = 0x7fc05023 addr = 0x7fc05000 flags = 0x23 ( P RW A )
+entry = 0x800000e3 addr = 0x80000000 flags = 0xe3 ( P RW A D PS )
+
+
+
+
+The issues is that we allocated a page:
+
+jweeks@pop-os:~/code/synapse$ grep 7fc05000 output.log
+Allocated 0x000000007fc05000
+
+But that page is IN USE!!
+It's in use to map the framebuffer (it's a page table):
+
+(gdb) print_address_indices 0x0000000080000000
+0x80000000 -> 0, 2, 0, 0
+entry = 0x7fc02023 addr = 0x7fc02000 flags = 0x23 ( P RW A )
+entry = 0x7fc05023 addr = 0x7fc05000 flags = 0x23 ( P RW A )
+entry = 0x7fc04000 addr = 0x7fc04000 flags = 0x0 ( )
+entry = 0x7fc03000 addr = 0x7fc03000 flags = 0x0 ( )
+
+And the next address allocated is:
+jweeks@pop-os:~/code/synapse$ grep -A1 7fc05000 output.log
+Allocated 0x000000007fc05000
+Allocated 0x000000007fc04000
+
+Which means we'll write 0x000000007fc04000 into the first part of 0x000000007fc05000
+Which effectively overwrites index 0 of that page table, which is the index which 
+the framebuffer is using!!!
+
+Based on the memory map, that address belongs in this range:
+[ INFO]:  src/main.rs@299: Type=BOOT_SERVICES_DATA, phys=0x7fbff000 - 0x7fe00000, virt=0x0, pages=513
+
+We shouldn't be using BOOT_SERVICES_DATA... or we should ensure we're no longer accessing it...
+
+The GDT and IDT when crashing were
+GDTR - 000000007F9DC000 0000000000000047, LDTR - 0000000000000000
+IDTR - 000000007F538018 0000000000000FFF,   TR - 0000000000000000
+
+Which map to (gdt):
+[ INFO]:  src/main.rs@299: Type=RUNTIME_SERVICES_DATA, phys=0x7f8ed000 - 0x7f9ed000, virt=0x0, pages=256
+
+and:
+[ INFO]:  src/main.rs@299: Type=BOOT_SERVICES_DATA, phys=0x7f537000 - 0x7f53d000, virt=0x0, pages=6
+
+Which means we'll need to copy and redefined these as well!!!
