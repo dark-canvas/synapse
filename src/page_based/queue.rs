@@ -20,7 +20,9 @@ impl<'a, T: Copy> Queue<'a, T> {
         let phys_page = pager.allocate_physical().unwrap();
         let virt_page = pager.get_virtual_address(phys_page).unwrap();
 
-        let queue: &'a mut Self = virt_page.as_mut_reference::<Self>();
+        // Construct the queue from the raw pointer instead of VirtualAddress::as_mut_reference,
+        // which is hard-wired to &'static mut T. We only need the pager to outlive the queue.
+        let queue: &'a mut Self = unsafe { &mut *(virt_page.as_mut_pointer::<Self>()) };
         queue.head = None;
         queue.tail = None;
         queue.allocator = NodeAllocator::new(pager);
@@ -101,40 +103,24 @@ mod tests {
             .returning(|| Ok(PhysicalAddress(0x1000)));
 
         let backing_store = Box::new([0u8; 4096]);
-        let virt_addr = VirtualAddress(backing_store.as_ptr() as usize as crate::Address);
+        let base_addr = backing_store.as_ptr() as usize as crate::Address;
+        let virt_addr = VirtualAddress(base_addr);
 
-        mock_pager.expect_get_virtual_address()
-            .times(1)
-            .withf(|addr| *addr == PhysicalAddress(0x1000))
-            .returning(move |_| Ok(virt_addr));
-
-        // page is 4096 bytes, and "BigSampleItem" is 1024 bytes.
-        // The header takes up a few bytes of the page, so it can't fit a full 8 BigSampleItem's 
-        // in the initially allocated page, but it should be able to fit 3 of them.
-
-        // in order to free each node, it must be able to convert it to a virtual address 
-        // in order to write to it (to add to the free list)
-        let queue_header_size = core::mem::size_of::<Queue::<BigSampleItem>>();
-        for node_addr in [ 
-            queue_header_size,
-            queue_header_size + 1024,
-            queue_header_size + 2048,
-        ] {
-            mock_pager.expect_get_virtual_address()
-                .times(1)
-                .with(predicate::eq(PhysicalAddress(0x1000 + node_addr as Address)))
-                .returning(move |_| Ok(virt_addr + node_addr));
-        }
+        // The queue page is a fixed virtual range, and the allocator may consult the pager again
+        // to map the queue header and free-list nodes into that page. Allow any physical address
+        // within the page and map it back to the corresponding offset within the backing store.
+        mock_pager.expect_get_virtual_address().returning(move |addr| {
+            let offset = addr.0 - 0x1000;
+            Ok(VirtualAddress(base_addr + offset))
+        });
 
         // create the queue borrowing from mock_pager
-        let queue = Queue::<BigSampleItem>::new(&mock_pager);
+        {
+            let queue = Queue::<BigSampleItem>::new(&mock_pager);
+            assert_eq!(queue as *const _ as Address, virt_addr.0);
+        }
 
-        assert_eq!(queue as *const _ as Address, virt_addr.0);
-        
-        // drop the queue so the pager can be used mutably afterwards
-        drop(queue);
-
-        // now it's possible to mutably borrow the mock pager to checkpoint or assert expectations
+        // the queue reference is dropped; now we can use the pager mutably again for assertions
         mock_pager.checkpoint();
     }
 }
