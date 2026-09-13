@@ -195,6 +195,14 @@ impl VirtualAddress {
     pub fn as_mut_pointer<T>(&self) -> *mut T {
         self.0 as usize as *mut T
     }
+
+    pub fn as_reference<T>(&self) -> &'static T {
+        unsafe { &*self.as_pointer::<T>() }
+    }
+
+    pub fn as_mut_reference<T>(&self) -> &'static mut T {
+        unsafe { &mut*self.as_mut_pointer::<T>() }
+    }
 }
 
 #[derive(PartialEq, Copy, Clone)]
