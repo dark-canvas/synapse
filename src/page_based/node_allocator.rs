@@ -9,8 +9,8 @@ use satus_struct::types::Address;
 /// Uses dynamically allocated pages to present an allocator of node-sized chucks.
 /// The free list of nodes is stored as physical addresses so that they can be mapped into any virtual address space.
 /// REVISIT: is this useful?  Probably for message queues and mutex/semaphores.
-pub struct NodeAllocator<T> {
-    pager: &'static dyn Pager,
+pub struct NodeAllocator<'a, T> {
+    pager: &'a dyn Pager,
     free: PhysicalAddress,
     _phantom: PhantomData<T>,
 }
@@ -21,8 +21,8 @@ struct FreeNode {
 
 // TODO: impl Drop for NodeAllocator... free all pages that've been allocated
 
-impl<T> NodeAllocator<T> {
-    pub fn new(pager: &'static dyn Pager) -> Self {
+impl<'a, T> NodeAllocator<'a, T> {
+    pub fn new(pager: &'a dyn Pager) -> Self {
         assert!(core::mem::size_of::<T>() >= core::mem::size_of::<FreeNode>(), "NodeAllocator<T> requires T to be at least as large as FreeNode");
         Self {
             pager,
