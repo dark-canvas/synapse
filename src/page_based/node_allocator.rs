@@ -168,4 +168,55 @@ mod tests {
             page[node0_offset..node0_offset + ptr_size].try_into().unwrap());
         assert_eq!(node0_next, 0);
     }
+
+    #[test]
+    fn test_allocate() {
+        let mut mock_pager = MockPager::new();
+        let node_size = std::mem::size_of::<BigSampleItem>();
+
+        // TODO: better way of handling multiple physical pages...
+        // possibly a wrapper around the mock_pager for this...
+        let page = Box::new([0u8; 4096]);
+        let page2 = Box::new([0u8; 4096]);
+        let base_addr = page.as_ptr() as usize as crate::Address;
+        let base_addr2 = page2.as_ptr() as usize as crate::Address;
+
+        // physical address 0x1000 will map to the virtual address of "base_addr"
+        // In other words, the physical address will map the buffer above.
+        let phys_base : usize = 0x1000;
+        mock_pager.expect_get_page_size().returning(||4096);
+        mock_pager.expect_get_page_mask().returning(||4095);
+        mock_pager.expect_get_virtual_address().returning(move |addr| {
+            let offset = addr.0 - phys_base as u64;
+            Ok(VirtualAddress(base_addr + offset))
+        });
+
+        // after using the free list, a page must be allocated...
+        mock_pager.expect_allocate_physical()
+            .times(1)
+            .returning(||Ok(PhysicalAddress(0x2000)));
+
+        
+        let phys_offset : usize = 128;
+        let mut allocator = NodeAllocator::<BigSampleItem>::new(&mock_pager);
+        allocator.use_page(PhysicalAddress(phys_base as Address), phys_offset);
+        
+        // the above call will use the tail 4096-128 bytes of the page as nodes.
+        // the nodes are 1024 bytes long (size of BigSampleItem), which means:
+        let node0 = base_addr + 128;
+        let node1 = base_addr + 128+1024;
+        let node2 = base_addr + 128+1024+1024;
+
+        // first 3 nodes are allocated from the free list...
+        for expected_node in [ node2, node1, node0 ] {
+            let node = allocator.allocate();
+            assert!(node.is_ok());
+            assert_eq!(node.unwrap() as *mut BigSampleItem, expected_node as *mut BigSampleItem);
+        }
+
+        // next node is allocated from a new page
+        let node = allocator.allocate();
+        assert!(node.is_ok());
+        // TODO: assert that this node is contained in the other physical page
+    }
 }

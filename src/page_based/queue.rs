@@ -22,7 +22,9 @@ impl<'a, T: Copy> Queue<'a, T> {
 
         // Construct the queue from the raw pointer instead of VirtualAddress::as_mut_reference,
         // which is hard-wired to &'static mut T. We only need the pager to outlive the queue.
-        let queue: &'a mut Self = unsafe { &mut *(virt_page.as_mut_pointer::<Self>()) };
+        //let queue: &'a mut Self = unsafe { &mut *(virt_page.as_mut_pointer::<Self>()) };
+        //let queue = virt_page.as_mut_reference::<Self>();
+        let queue = unsafe { &mut *virt_page.as_mut_pointer::<Self>() };
         queue.head = None;
         queue.tail = None;
         queue.allocator = NodeAllocator::new(pager);
@@ -114,10 +116,27 @@ mod tests {
             Ok(VirtualAddress(base_addr + offset))
         });
 
-        // create the queue borrowing from mock_pager
+        /*
+        // the allocator would've used the rest of the page as free nodes
+        let node_size = std::mem::size_of::<BigSampleItem>();
+        let header_size = std::mem::size_of::<Queue::<BigSampleItem>>();
+
+        // TODO: these assertions belong in node_allocator.rs...
+        let node_offsets = [
+            header_size + node_size + node_size,
+            header_size + node_size,
+            header_size,
+        ];
+        */
+
         {
             let queue = Queue::<BigSampleItem>::new(&mock_pager);
             assert_eq!(queue as *const _ as Address, virt_addr.0);
+
+            assert_eq!(queue.head, None);
+            assert_eq!(queue.tail, None);
+            //assert_ne!(queue.allocator.free, None);
+            //assert_eq!(queue.allocator.free, PhysicalAddress(0x1000 + node_offsets[0]));
         }
 
         // the queue reference is dropped; now we can use the pager mutably again for assertions
