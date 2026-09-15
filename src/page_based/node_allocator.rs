@@ -95,3 +95,77 @@ impl<'a, T> NodeAllocator<'a, T> {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::boxed::Box;
+    use std::mem::drop;
+    use mockall::predicate;
+
+    use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
+    use crate::pager::MockPager;
+    use crate::Address;
+
+    #[derive(Copy, Clone)]
+    struct BigSampleItem {
+        block: [u8; 1024],
+    }
+
+    #[test]
+    fn test_create_allocator() {
+        let pager = MockPager::new();
+        let allocator = NodeAllocator::<u64>::new(&pager);
+        // shouldn't call any methods on the pager yet
+    }
+
+    #[test]
+    fn test_use_part_page() {
+        let mut mock_pager = MockPager::new();
+        let node_size = std::mem::size_of::<BigSampleItem>();
+
+        let page = Box::new([0u8; 4096]);
+        let base_addr = page.as_ptr() as usize as crate::Address;
+
+        // physical address 0x1000 will map to the virtual address of "base_addr"
+        // In other words, the physical address will map the buffer above.
+        let phys_base : usize = 0x1000;
+        mock_pager.expect_get_page_size().returning(||4096);
+        mock_pager.expect_get_page_mask().returning(||4095);
+        mock_pager.expect_get_virtual_address().returning(move |addr| {
+            let offset = addr.0 - phys_base as u64;
+            Ok(VirtualAddress(base_addr + offset))
+        });        
+        
+        let phys_offset : usize = 128;
+        let mut allocator = NodeAllocator::<BigSampleItem>::new(&mock_pager);
+        allocator.use_page(PhysicalAddress(phys_base as Address), phys_offset);
+        
+        // the above call will use the tail 4096-128 bytes of the page as nodes.
+        // the nodes are 1024 bytes long (size of BigSampleItem), which means:
+        let node0_offset : usize = 128;
+        let node1_offset : usize = 128+1024;
+        let node2_offset : usize = 128+1024+1024;
+        // there isn't enough room for another node.
+        // nodes are added to the head of the "free" list which means the free list 
+        // currently points to node 2
+        assert_eq!(allocator.free, PhysicalAddress( (phys_base + node2_offset) as Address ));
+
+        // and that node will point to node 1
+        let ptr_size : usize = std::mem::size_of::<usize>();
+        let node2_next = usize::from_le_bytes(
+            page[node2_offset..node2_offset + ptr_size].try_into().unwrap());
+        assert_eq!(node2_next, phys_base + node1_offset);
+
+        // and node 1 will point to node 0
+        let node1_next = usize::from_le_bytes(
+            page[node1_offset..node1_offset + ptr_size].try_into().unwrap());
+        assert_eq!(node1_next, phys_base + node0_offset);
+
+        // and node 0 will point to nothing
+        let node0_next = usize::from_le_bytes(
+            page[node0_offset..node0_offset + ptr_size].try_into().unwrap());
+        assert_eq!(node0_next, 0);
+    }
+}
