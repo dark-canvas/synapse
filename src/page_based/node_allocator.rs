@@ -55,7 +55,7 @@ impl<'a, T> NodeAllocator<'a, T> {
         let page_size = self.pager.get_page_size();
         let page_mask = self.pager.get_page_mask();
 
-        let page_start = PhysicalAddress(page.0 & !page_mask);
+        let page_start = PhysicalAddress(page.0 & !page_mask); // or just an assert?
         let node_size = core::mem::size_of::<T>(); 
         let mut offset = offset;
 
@@ -75,13 +75,15 @@ impl<'a, T> NodeAllocator<'a, T> {
             let new_node = unsafe { &mut *(virt.0 as *mut T) };
 
             let mut offset = core::mem::size_of::<T>();
+            self.use_page(phys, offset);
+            /*
             while offset < self.pager.get_page_size() {
                 let next_phys = phys + offset;
                 //let next_virt = self.pager.get_virtual_address(next_phys)?;
                 self.free_phys(next_phys)?;
                 offset += core::mem::size_of::<T>();
             }
-
+            */
             Ok(new_node)
         } else {
             // pop a node from the free list
@@ -181,14 +183,18 @@ mod tests {
         let base_addr = page.as_ptr() as usize as crate::Address;
         let base_addr2 = page2.as_ptr() as usize as crate::Address;
 
-        // physical address 0x1000 will map to the virtual address of "base_addr"
-        // In other words, the physical address will map the buffer above.
-        let phys_base : usize = 0x1000;
+        // TODO: make a helper for mapping physical addresses to local buffer arrays being 
+        // used as virtual addresses
         mock_pager.expect_get_page_size().returning(||4096);
         mock_pager.expect_get_page_mask().returning(||4095);
         mock_pager.expect_get_virtual_address().returning(move |addr| {
+            let (phys_base, virt_base) = if addr.0 >= 0x1000 && addr.0 < 0x2000 { 
+                (0x1000, base_addr)
+            } else { 
+                (0x2000, base_addr2)
+            };
             let offset = addr.0 - phys_base as u64;
-            Ok(VirtualAddress(base_addr + offset))
+            Ok(VirtualAddress(virt_base + offset))
         });
 
         // after using the free list, a page must be allocated...
@@ -199,7 +205,7 @@ mod tests {
         
         let phys_offset : usize = 128;
         let mut allocator = NodeAllocator::<BigSampleItem>::new(&mock_pager);
-        allocator.use_page(PhysicalAddress(phys_base as Address), phys_offset);
+        allocator.use_page(PhysicalAddress(0x1000), phys_offset);
         
         // the above call will use the tail 4096-128 bytes of the page as nodes.
         // the nodes are 1024 bytes long (size of BigSampleItem), which means:
@@ -214,9 +220,20 @@ mod tests {
             assert_eq!(node.unwrap() as *mut BigSampleItem, expected_node as *mut BigSampleItem);
         }
 
+        let virt_page_2_node_0 = base_addr2;
+        let virt_page_2_node_1 = base_addr2 + 1024;
+        let virt_page_2_node_2 = base_addr2 + 1024 + 1024;
+        let virt_page_2_node_3 = base_addr2 + 1024 + 1024 + 1024;
         // next node is allocated from a new page
-        let node = allocator.allocate();
-        assert!(node.is_ok());
-        // TODO: assert that this node is contained in the other physical page
+        for expected_node in [ 
+            virt_page_2_node_0, // top of the page is returned first, and then...
+            virt_page_2_node_3, // the blocks are incrementally added in front of 
+            virt_page_2_node_2, // head, and are therefore returned in opposite 
+            virt_page_2_node_1  // order after the first one
+        ] {
+            let node = allocator.allocate();
+            assert!(node.is_ok());
+            assert_eq!(node.unwrap() as *mut BigSampleItem, expected_node as *mut BigSampleItem);
+        }
     }
 }
