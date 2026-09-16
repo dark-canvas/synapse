@@ -34,14 +34,16 @@ impl<'a, T> NodeAllocator<'a, T> {
     }
 
     pub fn free(&mut self, node: &T) -> Result<(), ErrCode> {
-        let phys = self.pager.get_physical_address(VirtualAddress(node as *const T as Address))?;
-        self.free_phys(phys)
+        let virtual_address = VirtualAddress(node as *const T as Address);
+        let phys = self.pager.get_physical_address(virtual_address)?;
+        self.free_phys(phys, virtual_address)
     }
 
     // Self is a virtual address, but everything else is a physical address and must be converted to a 
     // virtual address before it can be written to
-    fn free_phys(&mut self, phys_node: PhysicalAddress) -> Result<(), ErrCode> {
-        let virt_node = self.pager.get_virtual_address(phys_node).unwrap();
+    fn free_phys(&mut self, phys_node: PhysicalAddress, virt_node: VirtualAddress) -> Result<(), ErrCode> {
+        // TODO: force the caller to also provide virtual address since they know it...
+        //let virt_node = self.pager.get_virtual_address(phys_node).unwrap();
         // convert node to a FreeNode, and store the current free list head in its next pointer
         unsafe {
             let mut free_node = virt_node.as_mut_reference::<FreeNode>();
@@ -56,11 +58,13 @@ impl<'a, T> NodeAllocator<'a, T> {
         let page_mask = self.pager.get_page_mask();
 
         let page_start = PhysicalAddress(page.0 & !page_mask); // or just an assert?
+        let virt_start = self.pager.get_virtual_address(page_start).unwrap();
+        
         let node_size = core::mem::size_of::<T>(); 
         let mut offset = offset;
 
         while offset + node_size <= page_size {
-            self.free_phys(page_start + offset);
+            self.free_phys(page_start + offset, virt_start + offset);
             offset += node_size;
         }
         Ok(())
@@ -76,14 +80,6 @@ impl<'a, T> NodeAllocator<'a, T> {
 
             let mut offset = core::mem::size_of::<T>();
             self.use_page(phys, offset);
-            /*
-            while offset < self.pager.get_page_size() {
-                let next_phys = phys + offset;
-                //let next_virt = self.pager.get_virtual_address(next_phys)?;
-                self.free_phys(next_phys)?;
-                offset += core::mem::size_of::<T>();
-            }
-            */
             Ok(new_node)
         } else {
             // pop a node from the free list
@@ -120,6 +116,49 @@ mod tests {
         let pager = MockPager::new();
         let allocator = NodeAllocator::<u64>::new(&pager);
         // shouldn't call any methods on the pager yet
+    }
+
+    #[test]
+    fn test_free() {
+        let mut mock_pager = MockPager::new();
+
+        let node1 = 0u64;
+        let node2 = 0u64;
+        let node1_address = &node1 as *const u64 as u64;
+        let node2_address = &node2 as *const u64 as u64;
+
+        mock_pager.expect_get_page_size().returning(||4096);
+        mock_pager.expect_get_page_mask().returning(||4095);
+        mock_pager.expect_get_physical_address().returning(move |addr| {
+            let phys_addr = if addr.0 == node1_address {
+                0x1000
+            } else {
+                0x2000
+            };
+            Ok(PhysicalAddress(phys_addr))
+        });
+        mock_pager.expect_get_virtual_address().returning(move |addr| {
+            let virt_addr = if addr.0 == 0x1000 {
+                node1_address
+            } else {
+                node2_address
+            };
+            Ok(VirtualAddress(virt_addr))
+        });
+
+        let mut allocator = NodeAllocator::<u64>::new(&mock_pager);
+
+        allocator.free(&node1);
+        allocator.free(&node2);
+
+        // the next two allocations should return these nodes back
+        let node = allocator.allocate();
+        assert!(node.is_ok());
+        assert_eq!(node.unwrap() as *const u64, &node2 as *const u64);
+
+        let node = allocator.allocate();
+        assert!(node.is_ok());
+        assert_eq!(node.unwrap() as *const u64, &node1 as *const u64);
     }
 
     #[test]
