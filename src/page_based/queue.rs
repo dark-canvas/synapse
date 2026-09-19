@@ -91,6 +91,21 @@ mod tests {
         block: [u32; 1024],
     }
 
+    // TODO: add framework to allow queuing of nodes from a list of integers (ids)
+    // node objects are traits of any variables sizes which accept set_id(id) and 
+    // can response get_id(): u64.
+    // The tests can then have simple assertions:
+    // for id in [ 0 1 2 3 4 5] {
+    //   queue.enqueue(node::new(id))
+    // }
+    // and...
+    // for id in [ 0 1 2 3 4 5] {
+    //   let node = queue.dequeue().unwrap();
+    //   assert!(node.get_id(), id);
+    // }
+    // framework needs to create physical<->virtual memory mappings to hold 
+    // the various nodes.
+
     #[test]
     fn test_create_queue() {
         // The API previously required a 'static pager; change allows the pager to simply
