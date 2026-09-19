@@ -98,12 +98,15 @@ impl<'a, T> NodeAllocator<'a, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::vec;
     use std::boxed::Box;
     use std::mem::drop;
     use mockall::predicate;
 
     use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
     use crate::pager::MockPager;
+    use crate::pager::test_helpers::TestPager;
+    use crate::pager::test_helpers::PhysicalVirtualMapping;
     use crate::Address;
 
     #[derive(Copy, Clone)]
@@ -163,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_use_part_page() {
-        let mut mock_pager = MockPager::new();
+        let mut mock_pager = TestPager::new();
         let node_size = std::mem::size_of::<BigSampleItem>();
 
         let page = Box::new([0u8; 4096]);
@@ -171,16 +174,18 @@ mod tests {
 
         // physical address 0x1000 will map to the virtual address of "base_addr"
         // In other words, the physical address will map the buffer above.
-        let phys_base : usize = 0x1000;
-        mock_pager.expect_get_page_size().returning(||4096);
-        mock_pager.expect_get_page_mask().returning(||4095);
-        mock_pager.expect_get_virtual_address().returning(move |addr| {
-            let offset = addr.0 - phys_base as u64;
-            Ok(VirtualAddress(base_addr + offset))
-        });        
+        let phys_base : usize = 0x1000;        
+        mock_pager.set_mappings(
+            &vec![
+                PhysicalVirtualMapping::from_array(
+                    PhysicalAddress(phys_base as Address), 
+                    &*page
+                )
+            ]
+        );
         
         let phys_offset : usize = 128;
-        let mut allocator = NodeAllocator::<BigSampleItem>::new(&mock_pager);
+        let mut allocator = NodeAllocator::<BigSampleItem>::new(mock_pager.get_mock());
         allocator.use_page(PhysicalAddress(phys_base as Address), phys_offset);
         
         // the above call will use the tail 4096-128 bytes of the page as nodes.
@@ -212,45 +217,36 @@ mod tests {
 
     #[test]
     fn test_allocate() {
-        let mut mock_pager = MockPager::new();
+        //let mut mock_pager = MockPager::new();
         let node_size = std::mem::size_of::<BigSampleItem>();
 
         // TODO: better way of handling multiple physical pages...
         // possibly a wrapper around the mock_pager for this...
-        let page = Box::new([0u8; 4096]);
+        let page1 = Box::new([0u8; 4096]);
         let page2 = Box::new([0u8; 4096]);
-        let base_addr = page.as_ptr() as usize as crate::Address;
+        let base_addr1 = page1.as_ptr() as usize as crate::Address;
         let base_addr2 = page2.as_ptr() as usize as crate::Address;
 
-        // TODO: make a helper for mapping physical addresses to local buffer arrays being 
-        // used as virtual addresses
-        mock_pager.expect_get_page_size().returning(||4096);
-        mock_pager.expect_get_page_mask().returning(||4095);
-        mock_pager.expect_get_virtual_address().returning(move |addr| {
-            let (phys_base, virt_base) = if addr.0 >= 0x1000 && addr.0 < 0x2000 { 
-                (0x1000, base_addr)
-            } else { 
-                (0x2000, base_addr2)
-            };
-            let offset = addr.0 - phys_base as u64;
-            Ok(VirtualAddress(virt_base + offset))
-        });
+        let mut mock_pager = TestPager::new();
+        mock_pager.set_mappings(&vec![
+            PhysicalVirtualMapping::from_array(PhysicalAddress(0x1000), &*page1),
+            PhysicalVirtualMapping::from_array(PhysicalAddress(0x2000), &*page2),
+        ]);
 
         // after using the free list, a page must be allocated...
         mock_pager.expect_allocate_physical()
             .times(1)
             .returning(||Ok(PhysicalAddress(0x2000)));
-
         
         let phys_offset : usize = 128;
-        let mut allocator = NodeAllocator::<BigSampleItem>::new(&mock_pager);
+        let mut allocator = NodeAllocator::<BigSampleItem>::new(mock_pager.get_mock());
         allocator.use_page(PhysicalAddress(0x1000), phys_offset);
         
         // the above call will use the tail 4096-128 bytes of the page as nodes.
         // the nodes are 1024 bytes long (size of BigSampleItem), which means:
-        let node0 = base_addr + 128;
-        let node1 = base_addr + 128+1024;
-        let node2 = base_addr + 128+1024+1024;
+        let node0 = base_addr1 + 128;
+        let node1 = base_addr1 + 128+1024;
+        let node2 = base_addr1 + 128+1024+1024;
 
         // first 3 nodes are allocated from the free list...
         for expected_node in [ node2, node1, node0 ] {

@@ -11,6 +11,8 @@ use mockall::predicate::*;
 #[cfg(test)]
 use std::sync::LazyLock;
 
+#[cfg(test)]
+pub mod test_helpers;
 pub mod on_demand_array;
 pub mod on_demand_stack;
 
