@@ -8,7 +8,7 @@ const UNLOCKED : u32 = 0;
 
 #[allow(dead_code)]
 struct CpuMutex {
-    owner: AtomicU32,
+    owner: AtomicU32, // TODO: need to be able to copy CpuMutex and have each copy refer to the same owner address
     poisoned: bool,
 }
 
