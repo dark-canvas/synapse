@@ -183,6 +183,7 @@ mod tests {
                 )
             ]
         );
+        mock_pager.allow_get_virtual_address();
         
         let phys_offset : usize = 128;
         let mut allocator = NodeAllocator::<BigSampleItem>::new(mock_pager.get_mock());
@@ -232,6 +233,7 @@ mod tests {
             PhysicalVirtualMapping::from_array(PhysicalAddress(0x1000), &*page1),
             PhysicalVirtualMapping::from_array(PhysicalAddress(0x2000), &*page2),
         ]);
+        mock_pager.allow_get_virtual_address();
 
         // after using the free list, a page must be allocated...
         mock_pager.expect_allocate_physical()

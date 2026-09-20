@@ -17,7 +17,7 @@ pub mod on_demand_array;
 pub mod on_demand_stack;
 
 #[allow(dead_code)]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum PagerError {
     #[error("physical address not found")]
     PhysicalAddressNotFound(PhysicalAddress),
