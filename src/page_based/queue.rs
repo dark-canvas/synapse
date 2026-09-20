@@ -10,10 +10,12 @@ pub struct Queue<'a, T: Copy> {
 
 struct LinkNode<T: Copy> {
     item: T,
-    next: Option<*mut LinkNode<T>>,
+    next: *mut LinkNode<T>,  // Option consumes an extra word
 }
 
 impl<'a, T: Copy> Queue<'a, T> {
+    const NULL_NODE : *mut LinkNode<T> = 0 as *mut LinkNode<T>;
+
     pub fn new(pager: &'a dyn Pager) -> &'a mut Self {
         // The backing storage lives in a virtual page provided by the pager and must
         // outlive the returned queue reference. Tie the queue lifetime to the pager's.
@@ -37,11 +39,11 @@ impl<'a, T: Copy> Queue<'a, T> {
     pub fn enqueue(&mut self, item: T) -> Result<(), ErrCode> {
         let node = self.allocator.allocate()?;
         (*node).item = item;
-        (*node).next = None;
+        (*node).next = Self::NULL_NODE;
         match self.tail {
             Some(tail_node) => {
                 unsafe {
-                    (*tail_node).next = Some(node);
+                    (*tail_node).next = node;
                 }
             }
             None => {
@@ -58,8 +60,8 @@ impl<'a, T: Copy> Queue<'a, T> {
             Some(head_node) => {
                 unsafe {
                     let next_node = (*head_node).next;
-                    self.head = next_node;
-                    if next_node.is_none() {
+                    self.head = Some(next_node);
+                    if next_node == Self::NULL_NODE {
                         self.tail = None;
                     }
                     return Ok((*head_node).item);
@@ -76,9 +78,12 @@ mod tests {
     use std::boxed::Box;
     use std::mem::drop;
     use mockall::predicate;
+    use std::cmp::Ordering;
 
     use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
     use crate::pager::MockPager;
+    use crate::pager::test_helpers::TestPager;
+    use crate::pager::test_helpers::PhysicalVirtualMapping;
     use crate::Address;
 
     #[derive(Copy, Clone)]
@@ -86,9 +91,32 @@ mod tests {
         value: u32,
     }
 
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     struct BigSampleItem {
-        block: [u32; 1024],
+        block: [u32; 254], // 1016 bytes, therefore 1024 bytes when in LinkNode
+    }
+
+    impl BigSampleItem {
+        pub fn new(value: u32) -> Self {
+            let mut result = BigSampleItem{
+                block: [0; 254],
+            };
+            result.block[0] = value;
+            result
+        }
+    }
+
+    impl PartialOrd for BigSampleItem {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl Ord for BigSampleItem {
+        fn cmp(&self, other: &Self) -> Ordering {
+            // Compare by age first, then by name
+            self.block[0].cmp(&other.block[0])
+        }
     }
 
     // TODO: add framework to allow queuing of nodes from a list of integers (ids)
@@ -108,53 +136,93 @@ mod tests {
 
     #[test]
     fn test_create_queue() {
-        // The API previously required a 'static pager; change allows the pager to simply
-        // outlive the queue. Use a local mock pager and drop the queue before mutably
-        // using the pager (e.g., calling checkpoint).
-        let mut mock_pager = MockPager::new();
+        let mut mock_pager = TestPager::new();
 
-        mock_pager.expect_get_page_size().returning(|| 4096);
-        mock_pager.expect_get_page_mask().returning(|| 4095);
-        mock_pager.expect_allocate_physical()
-            .times(1)
-            .returning(|| Ok(PhysicalAddress(0x1000)));
+        let phys_addr = PhysicalAddress(0x1000);
+        mock_pager.allow_allocate_physical(phys_addr);
 
         let backing_store = Box::new([0u8; 4096]);
         let base_addr = backing_store.as_ptr() as usize as crate::Address;
         let virt_addr = VirtualAddress(base_addr);
 
-        // The queue page is a fixed virtual range, and the allocator may consult the pager again
-        // to map the queue header and free-list nodes into that page. Allow any physical address
-        // within the page and map it back to the corresponding offset within the backing store.
-        mock_pager.expect_get_virtual_address().returning(move |addr| {
-            let offset = addr.0 - 0x1000;
-            Ok(VirtualAddress(base_addr + offset))
-        });
+        mock_pager.add_mapping(phys_addr, virt_addr);
+        mock_pager.allow_get_virtual_address();
 
-        /*
-        // the allocator would've used the rest of the page as free nodes
-        let node_size = std::mem::size_of::<BigSampleItem>();
-        let header_size = std::mem::size_of::<Queue::<BigSampleItem>>();
+        let queue = Queue::<BigSampleItem>::new(mock_pager.get_mock());
+        assert_eq!(queue as *const _ as Address, virt_addr.0);
 
-        // TODO: these assertions belong in node_allocator.rs...
-        let node_offsets = [
-            header_size + node_size + node_size,
-            header_size + node_size,
-            header_size,
-        ];
-        */
-
-        {
-            let queue = Queue::<BigSampleItem>::new(&mock_pager);
-            assert_eq!(queue as *const _ as Address, virt_addr.0);
-
-            assert_eq!(queue.head, None);
-            assert_eq!(queue.tail, None);
-            //assert_ne!(queue.allocator.free, None);
-            //assert_eq!(queue.allocator.free, PhysicalAddress(0x1000 + node_offsets[0]));
-        }
+        assert_eq!(queue.head, None);
+        assert_eq!(queue.tail, None);
 
         // the queue reference is dropped; now we can use the pager mutably again for assertions
         mock_pager.checkpoint();
+    }
+
+    #[test]
+    fn test_enqueue_single_page() {
+        // TODO: create a TestQueue which simplifies the following?
+        // Allow for spanning multiple pages
+        let mut mock_pager = TestPager::new();
+
+        let phys_addr = PhysicalAddress(0x1000);
+        mock_pager.allow_allocate_physical(phys_addr);
+
+        let backing_store = Box::new([0u8; 4096]);
+        let base_addr = backing_store.as_ptr() as usize as crate::Address;
+        let virt_addr = VirtualAddress(base_addr);
+
+        mock_pager.add_mapping(phys_addr, virt_addr);
+        mock_pager.allow_get_virtual_address();
+
+        let queue = Queue::<u32>::new(mock_pager.get_mock());
+        
+        for value in 0..10 {
+            queue.enqueue(value);
+        }
+
+        for value in 0..10 {
+            let result = queue.dequeue();
+            assert_eq!(result, Ok(value));
+        }
+    }
+    
+    #[test]
+    fn test_enqueue_multi_page() {
+        assert_eq!(std::mem::size_of::<LinkNode<BigSampleItem>>(), 1024);
+        // TODO: create a TestQueue which simplifies the following?
+        // Allow for spanning multiple pages
+        let mut mock_pager = TestPager::new();
+
+        let phys_addr1 = PhysicalAddress(0x1000);
+        let phys_addr2 = PhysicalAddress(0x5000);
+        mock_pager.allow_allocate_physical(phys_addr1);
+        mock_pager.allow_allocate_physical(phys_addr2);
+
+        let backing_store = Box::new([0u8; 8196]); // 2 pages
+        let base_addr1 = backing_store.as_ptr() as usize as crate::Address;
+        let base_addr2 = base_addr1 + 4096;
+        let virt_addr1 = VirtualAddress(base_addr1);
+        let virt_addr2 = VirtualAddress(base_addr2);
+
+        mock_pager.add_mapping(phys_addr1, virt_addr1);
+        mock_pager.add_mapping(phys_addr2, virt_addr2);
+        mock_pager.allow_get_virtual_address();
+
+        // a single page can only hold 4 BigSampleItem's... and the first page, 
+        // because it also contians a header, can only contain 3 BigSampleItems
+        let queue = Queue::<BigSampleItem>::new(mock_pager.get_mock());
+        
+        // TODO: determine why the 7th node allocates another page... it shouldn't
+        // first page ___        _____ Second Page
+        //               \      /
+        //             vvvvv vvvvvvv
+        for value in [ 1,2,3,4,5,6,7 ] {
+            queue.enqueue(BigSampleItem::new(value));
+        }
+
+        for value in 1..=7 {
+            let result = queue.dequeue();
+            assert_eq!(result, Ok(BigSampleItem::new(value)));
+        }
     }
 }
