@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::pager::PagerError;
 
 #[allow(dead_code)]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum ErrCode {
     #[error("unknown error")]
     Unknown,
