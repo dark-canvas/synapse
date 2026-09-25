@@ -1,18 +1,20 @@
 use core::marker::PhantomData;
 use crate::errors::ErrCode;
 use crate::arch::x86_64::pager::VirtualAddress;
-use super::get_pager;
+use crate::pager::Pager;
 
-pub struct OnDemandStack<T: Copy> {
+pub struct OnDemandStack<'a, T: Copy> {
+    pager: &'a dyn Pager,
     base_address: VirtualAddress,
     max_items: usize,
     num_items: usize,
     _phantom: PhantomData<T>,
 }
     
-impl<T: Copy> OnDemandStack<T> {
-    pub fn new(base_address: VirtualAddress, max_items: usize) -> Self {
+impl<'a, T: Copy> OnDemandStack<'a, T> {
+    pub fn new(pager: &'a dyn Pager, base_address: VirtualAddress, max_items: usize) -> Self {
         Self {
+            pager,
             base_address,
             max_items,
             num_items: 0,
@@ -27,8 +29,8 @@ impl<T: Copy> OnDemandStack<T> {
         let offset = core::mem::size_of::<T>() * self.num_items;
         let addr = self.base_address + offset;
         let end = addr + core::mem::size_of::<T>();
-        let num_pages = ((end - addr) >> get_pager().get_page_size_log2()) + 1;
-        match get_pager().ensure_mapped_range(addr, num_pages as usize) {
+        let num_pages = ((end - addr) >> self.pager.get_page_size_log2()) + 1;
+        match self.pager.ensure_mapped_range(addr, num_pages as usize) {
             Ok(_) => {
                 unsafe { *(addr.0 as *mut T) = item; }
                 self.num_items += 1;
