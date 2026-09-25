@@ -1,4 +1,0 @@
-
-cargo install cargo-tarpaulin --version 0.24.0 >/tmp/tarpaulin-install.log 2>&1 && cargo tarpaulin --version
-
-cargo +nightly install cargo-llvm-cov --locked >/tmp/llvmcov-install.log 2>&1 && cargo +nightly llvm-cov --version 2>&1
