@@ -63,6 +63,7 @@ impl TestPager {
 
         mock_pager.expect_get_page_size().returning(||4096);
         mock_pager.expect_get_page_mask().returning(||4095);
+        mock_pager.expect_get_page_size_log2().returning(||12);
 
         TestPager {
             phys_to_virt_mappings: Vec::new(),
