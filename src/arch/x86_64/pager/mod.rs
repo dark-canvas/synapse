@@ -160,6 +160,67 @@ impl Sub<usize> for PhysicalAddress {
     }
 }
 
+// subtracting addresses (eg. top - bottom, or item - base) yields a size
+impl Sub<VirtualAddress> for VirtualAddress {
+    type Output = usize;
+
+    fn sub(self, rhs: VirtualAddress) -> Self::Output {
+        (self.0 - rhs.0) as usize
+    }
+}
+
+impl Sub<PhysicalAddress> for PhysicalAddress {
+    type Output = usize;
+
+    fn sub(self, rhs: PhysicalAddress) -> Self::Output {
+        (self.0 - rhs.0) as usize
+    }
+}
+
+impl PhysicalAddress {
+    pub fn as_pointer<T>(&self) -> *const T {
+        self.0 as usize as *const T
+    }
+
+    pub fn as_mut_pointer<T>(&self) -> *mut T {
+        self.0 as usize as *mut T
+    }
+}
+
+impl VirtualAddress {
+    pub fn as_pointer<T>(&self) -> *const T {
+        self.0 as usize as *const T
+    }
+
+    pub fn as_mut_pointer<T>(&self) -> *mut T {
+        self.0 as usize as *mut T
+    }
+
+    pub fn as_reference<T>(&self) -> &T {
+        unsafe { &*self.as_pointer::<T>() }
+    }
+
+    pub fn as_mut_reference<T>(&self) -> &mut T {
+        unsafe { &mut *self.as_mut_pointer::<T>() }
+    }
+
+    /*
+    pub fn as_mut_reference<'a, T>(&'a self) -> &'a mut T {
+        unsafe { &mut *(self.0 as *mut T) }
+    }
+        */
+
+    /*
+    pub fn to_reference<T>(self) -> &'static T {
+        unsafe { &*self.as_pointer::<T>() }
+    }
+
+    pub fn to_mut_reference<T>(self) -> &'static mut T {
+        unsafe { &mut *self.as_mut_pointer::<T>() }
+    }
+        */
+}
+
 #[derive(PartialEq, Copy, Clone)]
 pub enum PageType {
     Page4KB,
@@ -1080,6 +1141,11 @@ impl PagerInterface for Pager {
     fn get_page_size(&self) -> usize {
         4096
     }
+
+    fn get_page_size_log2(&self) -> usize {
+        12
+    }
+
     fn allocate_physical(&self) -> Result<PhysicalAddress, ErrCode> { 
         self.allocate_4kb_page().map(PhysicalAddress).ok_or(ErrCode::OutOfMemory)
     }
