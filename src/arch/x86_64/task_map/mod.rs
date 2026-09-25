@@ -8,6 +8,7 @@
 use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
 use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
 use crate::errors::ErrCode;
+use crate::pager::Pager;
 use crate::pager::on_demand_array::OnDemandArray;
 use crate::pager::on_demand_stack::OnDemandStack;
 
@@ -38,18 +39,18 @@ const _: () = {
 };
 
 // TODO: this is shared between CPUs and so will need a CPU mutex
-pub struct TaskMap {
-    tasks: OnDemandArray::<Task>,
-    free_stack: OnDemandStack::<TaskHandle>,
+pub struct TaskMap<'a> {
+    tasks: OnDemandArray::<'a, Task>,
+    free_stack: OnDemandStack::<'a, TaskHandle>,
     next_handle: TaskHandle,
 }
 
-impl TaskMap {
+impl<'a> TaskMap<'a> {
 
-    pub fn new(array_base: VirtualAddress, free_stack_base: VirtualAddress, max_handles: usize) -> Result<TaskMap, ErrCode> {
+    pub fn new(pager: &'a dyn Pager, array_base: VirtualAddress, free_stack_base: VirtualAddress, max_handles: usize) -> Result<TaskMap, ErrCode> {
         Ok(TaskMap {
-            tasks: OnDemandArray::new(array_base, max_handles),
-            free_stack: OnDemandStack::new(free_stack_base, max_handles),
+            tasks: OnDemandArray::new(pager, array_base, max_handles),
+            free_stack: OnDemandStack::new(pager, free_stack_base, max_handles),
             next_handle: 0,
         })
     }
