@@ -37,6 +37,10 @@ const KERNEL_START: u64 = 0xFFFFFF8000000000;
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    // TODO: this should possibly use a printf macro that doesn't require the cpu_mutex
+    // If the cpu_mutex panics, it'll call into this function, which calls printf, which tries 
+    // to lock the same mutex that just panic'd, and will create an infinite, recursive loop, 
+    // until it consumes all the stack and crashes
     println!("Panic: {}", info);
     loop {}
 }
@@ -53,6 +57,7 @@ pub extern "C" fn _start() -> ! {
         );
     }
 
+    logger::init();
     println!("Starting Synapse...");
 
     let config = Config::from_page(config_addr);

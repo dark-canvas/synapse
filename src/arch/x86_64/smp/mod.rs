@@ -13,6 +13,7 @@ use acpi::sdt::madt::{Madt, MadtEntry};
 use core::pin::Pin;
 use core::slice;
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 use crate::Address;
 use crate::arch::x86_64::pager::PHYSICAL_OFFSET;
@@ -31,6 +32,7 @@ use self::cpu_state::State;
 use self::cpu_state::CpuState;
 use self::cpu_stack::CpuStack;
 
+pub static SMP_INITIALIZED: AtomicBool = AtomicBool::new( false );
 
 pub fn kernel_ap_entry() {
     let cpu_state = unsafe { CpuState::get_local_cpu_state() };
@@ -204,6 +206,8 @@ pub fn init(config: &Config) {
             }
         }
     }
+
+    SMP_INITIALIZED.store(true, Ordering::Relaxed);
 }
 
 unsafe fn startup_ap(
