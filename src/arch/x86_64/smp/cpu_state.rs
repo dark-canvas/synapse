@@ -3,6 +3,7 @@ use crate::page_based;
 use crate::types::CpuId;
 use crate::errors::ErrCode;
 use super::per_cpu_data;
+use num_traits::AsPrimitive;
 use satus_struct::config::Config;
 use core::default::Default;
 use core::arch::asm;
@@ -61,7 +62,10 @@ impl CpuState {
 
 // TODO: modify read (movq) based on size of T?
 #[allow(dead_code)]
-unsafe fn get_cpu_state_at_offset<T: PrimInt>(offset: usize) -> T {
+unsafe fn get_cpu_state_at_offset<T: PrimInt + 'static>(offset: usize) -> T
+where
+    u64: AsPrimitive<T>,
+{
     let mut val: u64;
     unsafe {
         core::arch::asm!(
@@ -71,7 +75,8 @@ unsafe fn get_cpu_state_at_offset<T: PrimInt>(offset: usize) -> T {
             options(att_syntax),
         );
     }
-    num_traits::cast(val).unwrap()
+
+    val.as_()
 }
     
 // TODO: proper error codes for this... (return err if SMP not initialized?)
