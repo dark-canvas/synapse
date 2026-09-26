@@ -1,9 +1,14 @@
 use core::fmt::{self, Write};
 use x86_64::instructions::port::Port;
+use spin::Once;
 
 use crate::types::Address;
+use crate::sync::cpu_mutex::CpuMutex;
 
 pub struct SerialPort {}
+
+unsafe impl Send for SerialPort {}
+unsafe impl Sync for SerialPort {}
 
 pub const LOG_ALLOC_4KB: &str = "alloc_4kb";
 pub const LOG_ALLOC_2MB: &str = "alloc_2mb";
@@ -16,6 +21,7 @@ pub const LOG_BORROW_1GB: &str = "borrow_1gb";
 pub const LOG_AGGREGATE_2MB: &str = "aggregate_2mb";
 pub const LOG_AGGREGATE_1GB: &str = "aggregate_1gb";
 
+pub static LOGGER: Once<CpuMutex<SerialPort>> = Once::new();
 
 pub struct FrameBufferLogger {
     address: Address,
@@ -114,8 +120,6 @@ impl Write for SerialPort {
     }
 }
 
-
-
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => ($crate::logger::_print(format_args!($($arg)*)));
@@ -131,7 +135,7 @@ macro_rules! println {
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     use core::fmt::Write;
-    let mut serial_port = SerialPort {};
+    let mut serial_port = LOGGER.get().unwrap().lock().unwrap();
     serial_port.write_fmt(args).unwrap();
 }
 
@@ -139,4 +143,11 @@ pub fn _print(args: fmt::Arguments) {
 #[doc(hidden)]
 pub fn _print(_args: fmt::Arguments) {
     // Nothing for now...
+}
+
+
+pub fn init() {
+    LOGGER.call_once(|| {
+        CpuMutex::new(SerialPort{})
+    });
 }

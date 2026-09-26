@@ -1,51 +1,82 @@
-use core::sync::atomic::{AtomicU32, Ordering};
-use core::ops::Drop;
+use core::sync::atomic::{AtomicU32, AtomicBool, Ordering};
+use core::cell::UnsafeCell;
+use core::ops::{Drop, Deref, DerefMut};
 use crate::errors::ErrCode;
+// TODO: this non-arch code should not be importing arch-specific code!!!
 use crate::arch::x86_64::smp::cpu_state; // need a better way to do this across arch!  Think of a design!
-
+use crate::arch::x86_64::smp::SMP_INITIALIZED;
 #[allow(dead_code)]
 const UNLOCKED : u32 = 0;
 
 #[allow(dead_code)]
-struct CpuMutex {
+pub struct CpuMutex<T> {
     owner: AtomicU32, // TODO: need to be able to copy CpuMutex and have each copy refer to the same owner address
-    poisoned: bool,
+    poisoned: AtomicBool,
+    data: UnsafeCell<T>, // REVISIT: the core rust mutex wraps this in an UnsafeCell; do we need to?
 }
 
 #[allow(dead_code)]
-struct CpuMutexGuard<'a> {
-    mutex: &'a mut CpuMutex,
+pub struct CpuMutexGuard<'a, T> {
+    mutex: &'a CpuMutex<T>,
 }
 
-impl<'a> Drop for CpuMutexGuard<'a> {
+unsafe impl<'a, T> Sync for CpuMutexGuard<'a, T> {}
+unsafe impl<'a, T> Send for CpuMutexGuard<'a, T> {}
+
+impl<'a, T> Drop for CpuMutexGuard<'a, T> {
     fn drop(&mut self) {
         self.mutex.unlock();
     }
 }
 
+impl<'a, T> Deref for CpuMutexGuard<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        unsafe { &*self.mutex.data.get() }
+    }
+}
+
+impl<'a, T> DerefMut for CpuMutexGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.mutex.data.get() }
+    }
+}
+
 #[allow(dead_code)]
-impl<'a> CpuMutexGuard<'a> {
-    fn new(mutex: &'a mut CpuMutex) -> CpuMutexGuard<'a> {
+impl<'a, T> CpuMutexGuard<'a, T> {
+    fn new(mutex: &'a CpuMutex<T>) -> CpuMutexGuard<'a, T> {
         CpuMutexGuard{
             mutex: mutex
         }
     }
 }
 
+unsafe impl<T> Sync for CpuMutex<T> {}
+unsafe impl<T> Send for CpuMutex<T> {}
+
+
 #[allow(dead_code)]
-impl CpuMutex {
-    pub fn new() -> Self {
+impl<T> CpuMutex<T> {
+    pub fn new(data: T) -> Self {
         Self {
             owner: AtomicU32::new(UNLOCKED),
-            poisoned: false,
+            data: UnsafeCell::new(data),
+            poisoned: AtomicBool::new(false),
         }
     }
 
     fn get_lock_value() -> u32 {
+        // TODO: what if SMP is not initialized when it's locked, but *IS* when unlocked...
+        // possibly need to save the cpu_num into the MutexLockGuard
+        if !SMP_INITIALIZED.load(Ordering::Relaxed) {
+            return 1;
+        }
+
         cpu_state::get_cpu_id().unwrap() as u32 + 1 // CpuId == 0 is valid, but == UNLOCKED, so we can't use it
     }
 
-    pub fn lock(&mut self) -> Result<CpuMutexGuard<'_>, ErrCode> {
+    pub fn lock(&self) -> Result<CpuMutexGuard<'_, T>, ErrCode> {
         let lock_value = Self::get_lock_value();
         loop {
             match self.owner.compare_exchange(
@@ -61,7 +92,7 @@ impl CpuMutex {
         }
     }
 
-    pub fn unlock(&mut self) {
+    fn unlock(&self) {
         match self.owner.compare_exchange(
             Self::get_lock_value(),
             UNLOCKED,
@@ -69,7 +100,7 @@ impl CpuMutex {
             Ordering::Relaxed) {
 
             Ok(_) => return,
-            Err(_cpu) => self.poisoned = true, // lock is poisoned!!!
+            Err(_cpu) => self.poisoned.store(true, Ordering::Relaxed), // lock is poisoned!!!
 
         }
     }
