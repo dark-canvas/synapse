@@ -2,10 +2,10 @@ use crate::page_based::node_allocator::NodeAllocator;
 use crate::errors::ErrCode;
 use crate::pager::Pager;
 
-pub struct Queue<'a, T: Copy> {
+pub struct Queue<P, T: Copy> {
     head: Option<*mut LinkNode<T>>,
     tail: Option<*mut LinkNode<T>>,
-    allocator: NodeAllocator<'a, LinkNode<T>>,
+    allocator: NodeAllocator<P, LinkNode<T>>,
 }
 
 struct LinkNode<T: Copy> {
@@ -13,25 +13,20 @@ struct LinkNode<T: Copy> {
     next: *mut LinkNode<T>,  // Option consumes an extra word
 }
 
-impl<'a, T: Copy> Queue<'a, T> {
+impl<P, T: Copy> Queue<P, T>
+where
+    P: Pager,
+{
     const NULL_NODE : *mut LinkNode<T> = 0 as *mut LinkNode<T>;
 
-    pub fn new(pager: &'a dyn Pager) -> &'a mut Self {
-        // The backing storage lives in a virtual page provided by the pager and must
-        // outlive the returned queue reference. Tie the queue lifetime to the pager's.
+    pub fn new(pager: P) -> Self {
         let phys_page = pager.allocate_physical().unwrap();
-        let virt_page = pager.get_virtual_address(phys_page).unwrap();
-
-        // Construct the queue from the raw pointer instead of VirtualAddress::as_mut_reference,
-        // which is hard-wired to &'static mut T. We only need the pager to outlive the queue.
-        //let queue: &'a mut Self = unsafe { &mut *(virt_page.as_mut_pointer::<Self>()) };
-        //let queue = virt_page.as_mut_reference::<Self>();
-        let queue = unsafe { &mut *virt_page.as_mut_pointer::<Self>() };
-        queue.head = None;
-        queue.tail = None;
-        queue.allocator = NodeAllocator::new(pager);
+        let mut queue = Self {
+            head: None,
+            tail: None,
+            allocator: NodeAllocator::new(pager),
+        };
         queue.allocator.use_page(phys_page, core::mem::size_of::<Self>()).unwrap();
-
         queue
     }
 
@@ -148,8 +143,7 @@ mod tests {
         mock_pager.add_mapping(phys_addr, virt_addr);
         mock_pager.allow_get_virtual_address();
 
-        let queue = Queue::<BigSampleItem>::new(mock_pager.get_mock());
-        assert_eq!(queue as *const _ as Address, virt_addr.0);
+        let queue = Queue::<_, BigSampleItem>::new(mock_pager.get_mock());
 
         assert_eq!(queue.head, None);
         assert_eq!(queue.tail, None);
@@ -174,7 +168,7 @@ mod tests {
         mock_pager.add_mapping(phys_addr, virt_addr);
         mock_pager.allow_get_virtual_address();
 
-        let queue = Queue::<u32>::new(mock_pager.get_mock());
+        let mut queue = Queue::<_, u32>::new(mock_pager.get_mock());
         
         for value in 0..10 {
             queue.enqueue(value);
@@ -210,7 +204,7 @@ mod tests {
 
         // a single page can only hold 4 BigSampleItem's... and the first page, 
         // because it also contians a header, can only contain 3 BigSampleItems
-        let queue = Queue::<BigSampleItem>::new(mock_pager.get_mock());
+        let mut queue = Queue::<_, BigSampleItem>::new(mock_pager.get_mock());
         
         // TODO: determine why the 7th node allocates another page... it shouldn't
         // first page ___        _____ Second Page
