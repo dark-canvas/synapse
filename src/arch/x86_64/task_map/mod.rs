@@ -5,14 +5,17 @@
 //! state.
 //! The task map consists of an array of task structures, and a stack of free task handles.
 
-use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
+// TODO: move this into the scheduler module?
+
+//use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
 use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
 use crate::errors::ErrCode;
 use crate::pager::Pager;
 use crate::pager::on_demand_array::OnDemandArray;
 use crate::pager::on_demand_stack::OnDemandStack;
+use crate::arch::x86_64::scheduler::task::{Task, create_task_id, get_task_generation_from_id};
 
-const TASK_MAP_BASE_ADDRESS: VirtualAddress = VirtualAddress(0xFFFFFFF010000000);
+pub const TASK_MAP_BASE_ADDRESS: VirtualAddress = VirtualAddress(0xFFFFFFF010000000);
 const TASK_MAP_TOP: VirtualAddress = VirtualAddress(0xFFFFFFFFFFFFFFFF);
 const TASK_MAP_SIZE: usize = TASK_MAP_TOP.0 as usize - TASK_MAP_BASE_ADDRESS.0 as usize + 1;
 
@@ -20,9 +23,16 @@ const TASK_MAP_MAX_TASKS: usize = 1_048_576; // 1M for now; can likely support m
 
 const TASK_MAP_ARRAY_SIZE: usize = TASK_MAP_MAX_TASKS * core::mem::size_of::<Task>();
 const TASK_MAP_FREE_STACK_SIZE: usize = TASK_MAP_MAX_TASKS * core::mem::size_of::<TaskHandle>();
+const TASK_MAP_FREE_STACK_BASE: VirtualAddress = VirtualAddress(TASK_MAP_TOP.0 - TASK_MAP_FREE_STACK_SIZE as u64 + 1);
 
 pub type TaskHandle = u32;
 
+// TODO: there's multiple task implemenations now...
+// The task trait
+// x86_64::scheduler::Task (which the scheduler/yield code already uses)
+// This one (which contains needed things which aren't in the above one)
+// TODO: create a single Task structure somewhere (proably in scheduler... should task_map be in scheduler?)
+/* 
 pub struct Task {
     kernel_stack: [u8; 16*1024],
     io_bitmap: [u8; 8193],
@@ -31,7 +41,7 @@ pub struct Task {
     registers: RegisterSnapshot,
     //fp_registers: FPRegisterSnapshot,
     //avx_snapshot: AVXRegisterSnapshot,
-}
+}*/
 
 const _: () = {
     assert!(TASK_MAP_ARRAY_SIZE + TASK_MAP_FREE_STACK_SIZE <= TASK_MAP_SIZE, "Task map is too small!");
@@ -47,7 +57,14 @@ pub struct TaskMap<'a> {
 
 impl<'a> TaskMap<'a> {
 
-    pub fn new(pager: &'a dyn Pager, array_base: VirtualAddress, free_stack_base: VirtualAddress, max_handles: usize) -> Result<TaskMap, ErrCode> {
+    pub fn new(pager: &'a dyn Pager) -> Result<TaskMap, ErrCode> {
+        Self::new_at(pager, 
+            TASK_MAP_BASE_ADDRESS,
+            TASK_MAP_FREE_STACK_BASE, 
+            TASK_MAP_MAX_TASKS)
+    }
+
+    pub fn new_at(pager: &'a dyn Pager, array_base: VirtualAddress, free_stack_base: VirtualAddress, max_handles: usize) -> Result<TaskMap, ErrCode> {
         Ok(TaskMap {
             tasks: OnDemandArray::new(pager, array_base, max_handles),
             free_stack: OnDemandStack::new(pager, free_stack_base, max_handles),
@@ -59,7 +76,7 @@ impl<'a> TaskMap<'a> {
         self.tasks.get(handle as usize)
     }
 
-    pub fn new_task(&mut self) -> Result<&'static Task, ErrCode> {
+    pub fn new_task(&mut self) -> Result<&'static mut Task, ErrCode> {
         if let Ok(handle) = self.free_stack.pop() {
             // Implementation for creating a new task
             return self.construct(self.tasks.get_mut(handle as usize)?);
@@ -69,6 +86,17 @@ impl<'a> TaskMap<'a> {
         } else {
             return Err(ErrCode::OutOfHandles);
         }
+    }
+
+    pub fn get_index(&self, task: &Task) -> Result<usize, ErrCode> {
+        let base_address = self.tasks.get_base_address();
+        let task_address = task as *const Task as usize;
+        let base_address_usize = base_address.0 as usize;
+        if task_address < base_address_usize || task_address >= base_address_usize + TASK_MAP_ARRAY_SIZE {
+            return Err(ErrCode::InvalidHandle);
+        }
+        let index = (task_address - base_address_usize) / core::mem::size_of::<Task>();
+        Ok(index)
     }
 
     pub fn free_task(&mut self, handle: TaskHandle) -> Result<(), ErrCode> {
@@ -83,13 +111,20 @@ impl<'a> TaskMap<'a> {
         Ok(())
     }
 
-    fn construct(&self, task: &'static mut Task) -> Result<&'static Task, ErrCode> {
+    fn construct(&self, task: &'static mut Task) -> Result<&'static mut Task, ErrCode> {
         // Initialize the stack (TODO: make this runtime configurable)
         for byte in task.kernel_stack.iter_mut() {
             *byte = 0xa5;
         }
         // Initialize the IO bitmap (by defualt tasks have no IO permissions, so we set all bits to 0)
+        // TODO: how does this get set/enforced?
         task.io_bitmap.fill(0x0);
+        let generation = if task.id == 0 {
+            0
+        } else {
+            get_task_generation_from_id(task.id) + 1
+        };
+        task.id = create_task_id(self.get_index(task)?, generation);
         // TODO: create a separate address space for this task
         Ok(task)
     }

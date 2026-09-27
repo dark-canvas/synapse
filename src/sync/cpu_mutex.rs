@@ -10,9 +10,12 @@ const UNLOCKED : u32 = 0;
 
 #[allow(dead_code)]
 pub struct CpuMutex<T> {
-    owner: AtomicU32, // TODO: need to be able to copy CpuMutex and have each copy refer to the same owner address
+    // TODO: need to be able to provide the mutex to multiple code locations (i.e., multiple owners)
+    // Which means `owner` needs to be a pointer to an AtomicU32 (and poisoned and data)
+    // Or just pass a reference to the CpuMutex to the owners
+    owner: AtomicU32, 
     poisoned: AtomicBool,
-    data: UnsafeCell<T>, // REVISIT: the core rust mutex wraps this in an UnsafeCell; do we need to?
+    data: UnsafeCell<T>,
 }
 
 #[allow(dead_code)]
@@ -76,6 +79,10 @@ impl<T> CpuMutex<T> {
         cpu_state::get_cpu_id().unwrap() as u32 + 1 // CpuId == 0 is valid, but == UNLOCKED, so we can't use it
     }
 
+    // TODO: add other locking methods:
+    //   try_lock() - exit immediately if it couldn't lock
+    //   try_lock_for(duration) - if locked keep tryig up to duration
+
     pub fn lock(&self) -> Result<CpuMutexGuard<'_, T>, ErrCode> {
         let lock_value = Self::get_lock_value();
         loop {
@@ -86,8 +93,10 @@ impl<T> CpuMutex<T> {
                 Ordering::Relaxed) {
             
                 Ok(_) => return Ok( CpuMutexGuard::new(self) ),
-                Err(_cpu) => continue, // lock is owned by `cpu` now
-            
+                Err(_cpu) => { // lock is owned by `cpu` now
+                    core::hint::spin_loop();
+                    continue;
+                }
             }
         }
     }

@@ -23,8 +23,8 @@ Each index into the PLM4 table references a 512GB block of memory, which is furt
   </thead>
   <tbody>
     <tr>
-      <td align="center" rowspan="9">511</td>
-      <td align="center" rowspan="9"><tt>0xFFFFFFFFFFFFFFFF</tt><br><tt>0xFFFFFF8000000000</tt></td>
+      <td align="center" rowspan="10">511</td>
+      <td align="center" rowspan="10"><tt>0xFFFFFFFFFFFFFFFF</tt><br><tt>0xFFFFFF8000000000</tt></td>
       <td align="center">Task State Data</td>
       <td align="center"><tt>0xFFFFFFF010000000</tt></td>
       <td>Task Stacks/Metadata<br/><a href="#per-task-state">More details</a></td>
@@ -63,6 +63,11 @@ Each index into the PLM4 table references a 512GB block of memory, which is furt
       <td align="center">4KB Page Stack</td>
       <td align="center"><tt>0xFFFFFFD040000000</tt><br><tt>0xFFFFFFD000000000</tt></td>
       <td></td>
+    </tr>
+    <tr>
+      <td align="center">Kernel Global Data</td>
+      <td align="center"><tt>0xFFFFFF9000000000</tt><br><tt>0xFFFFFF9000001000</tt></td>
+      <td>Memory for global kernel allocations</td>
     </tr>
     <tr>
       <td align="center">Kernel</td>

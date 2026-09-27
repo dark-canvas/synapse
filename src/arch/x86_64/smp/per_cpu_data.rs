@@ -10,7 +10,7 @@ use crate::pager::PAGER;
 /// contains it's stack, as well as a region of state unique to it (data which the CPU can 
 /// use to determine which CPU number it is, and where it's scheduler structures are).
 ///
-/// Each CPU core is provided 2MB of space.
+/// Each CPU core is provided 1MB of space.
 ///
 /// The extents of this reagion can be calculated based on the CpuID of the executing core.
 /// Because the core doesn't know it's CpuID when it initially boots, the gs register is 

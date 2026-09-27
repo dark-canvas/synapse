@@ -19,6 +19,7 @@ mod errors;
 mod page_based;
 mod page_based_list;
 mod pager;
+mod scheduler;
 mod stack;
 mod sync;
 mod types;

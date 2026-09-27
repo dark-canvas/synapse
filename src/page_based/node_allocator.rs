@@ -9,8 +9,8 @@ use satus_struct::types::Address;
 /// Uses dynamically allocated pages to present an allocator of node-sized chucks.
 /// The free list of nodes is stored as physical addresses so that they can be mapped into any virtual address space.
 /// REVISIT: is this useful?  Probably for message queues and mutex/semaphores.
-pub struct NodeAllocator<'a, T> {
-    pager: &'a dyn Pager,
+pub struct NodeAllocator<P, T> {
+    pager: P,
     free: PhysicalAddress,
     _phantom: PhantomData<T>,
 }
@@ -21,8 +21,11 @@ struct FreeNode {
 
 // TODO: impl Drop for NodeAllocator... free all pages that've been allocated
 
-impl<'a, T> NodeAllocator<'a, T> {
-    pub fn new(pager: &'a dyn Pager) -> Self {
+impl<P, T> NodeAllocator<P, T>
+where
+    P: Pager,
+{
+    pub fn new(pager: P) -> Self {
         assert!(core::mem::size_of::<T>() >= core::mem::size_of::<FreeNode>(), "NodeAllocator<T> requires T to be at least as large as FreeNode");
         Self {
             pager,
@@ -117,7 +120,7 @@ mod tests {
     #[test]
     fn test_create_allocator() {
         let pager = MockPager::new();
-        let allocator = NodeAllocator::<u64>::new(&pager);
+        let allocator = NodeAllocator::<_, u64>::new(&pager);
         // shouldn't call any methods on the pager yet
     }
 
@@ -149,7 +152,7 @@ mod tests {
             Ok(VirtualAddress(virt_addr))
         });
 
-        let mut allocator = NodeAllocator::<u64>::new(&mock_pager);
+        let mut allocator = NodeAllocator::<_, u64>::new(&mock_pager);
 
         allocator.free(&node1);
         allocator.free(&node2);
@@ -186,7 +189,7 @@ mod tests {
         mock_pager.allow_get_virtual_address();
         
         let phys_offset : usize = 128;
-        let mut allocator = NodeAllocator::<BigSampleItem>::new(mock_pager.get_mock());
+        let mut allocator = NodeAllocator::<_, BigSampleItem>::new(mock_pager.get_mock());
         allocator.use_page(PhysicalAddress(phys_base as Address), phys_offset);
         
         // the above call will use the tail 4096-128 bytes of the page as nodes.
@@ -241,7 +244,7 @@ mod tests {
             .returning(||Ok(PhysicalAddress(0x2000)));
         
         let phys_offset : usize = 128;
-        let mut allocator = NodeAllocator::<BigSampleItem>::new(mock_pager.get_mock());
+        let mut allocator = NodeAllocator::<_, BigSampleItem>::new(mock_pager.get_mock());
         allocator.use_page(PhysicalAddress(0x1000), phys_offset);
         
         // the above call will use the tail 4096-128 bytes of the page as nodes.
