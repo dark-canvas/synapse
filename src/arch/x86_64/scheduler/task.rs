@@ -4,6 +4,8 @@ use crate::page_based_list::PageBasedList;
 use crate::Address;
 use crate::arch::x86_64::scheduler::VirtualAddress;
 use core::arch::asm;
+use crate::scheduler::Task as TaskInterface;
+use crate::scheduler::TaskId;
 
 unsafe fn kernel_task_entry() {
     asm!(
@@ -79,7 +81,7 @@ pub struct Task {
     */
 }
 
-pub type TaskList = PageBasedList<Task>;
+pub type TaskList = PageBasedList<TaskId>;
 
 #[allow(dead_code)]
 impl Task {
@@ -110,4 +112,10 @@ impl Task {
         result
     }
     */
+}
+
+impl TaskInterface for Task {
+    fn get_id(&self) -> TaskId {
+        self.id as u32
+    }
 }

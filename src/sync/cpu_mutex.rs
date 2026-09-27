@@ -76,6 +76,10 @@ impl<T> CpuMutex<T> {
         cpu_state::get_cpu_id().unwrap() as u32 + 1 // CpuId == 0 is valid, but == UNLOCKED, so we can't use it
     }
 
+    // TODO: add other locking methods:
+    //   try_lock() - exit immediately if it couldn't lock
+    //   try_lock_for(duration) - if locked keep tryig up to duration
+
     pub fn lock(&self) -> Result<CpuMutexGuard<'_, T>, ErrCode> {
         let lock_value = Self::get_lock_value();
         loop {
@@ -86,8 +90,10 @@ impl<T> CpuMutex<T> {
                 Ordering::Relaxed) {
             
                 Ok(_) => return Ok( CpuMutexGuard::new(self) ),
-                Err(_cpu) => continue, // lock is owned by `cpu` now
-            
+                Err(_cpu) => { // lock is owned by `cpu` now
+                    core::hint::spin_loop();
+                    continue;
+                }
             }
         }
     }

@@ -6,9 +6,8 @@ use super::pager::VirtualAddress;
 use super::pager::get_kernel_cr3;
 use crate::errors::ErrCode;
 use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
-
-// TODO:
-//use crate::scheduler::Scheduler as SchedulerInterface;
+use crate::scheduler::Scheduler as SchedulerInterface;
+use crate::scheduler::Task as TaskInterface;
 
 use core::arch::global_asm;
 
@@ -178,9 +177,15 @@ impl Scheduler {
         }
         scheduler
     }
+}
+
+impl SchedulerInterface for Scheduler {
+    type Task = Task;
 
     // REVISTIT: this consumes task... is it okay?  Is it efficient (check the assembly)
-    pub fn add_task(&mut self, task: Task) -> Result<(), ErrCode> {
-        self.tasks.add(task)
+    // TODO: I think it's not okay... the task comes form TaskMap and shouldn't ever be copied.
+    // The lists should be of TaskID which can be used to index into the taskmap!
+    fn add_task(&mut self, task: Self::Task) -> Result<(), ErrCode> {
+        self.tasks.add(task.get_id())
     }
 }

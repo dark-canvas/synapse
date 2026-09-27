@@ -38,6 +38,14 @@ pub fn kernel_ap_entry() {
     let cpu_state = unsafe { CpuState::get_local_cpu_state() };
     cpu_state.state = cpu_state::State::Initializing;
 
+    // wait until SMP_INITIALIZED is set, which means all CPUs have started up and 
+    // also indicated that they're (at least) in the Initializing state.  This also 
+    // means that all SMP-aware funcamentals should be functional.
+    while !SMP_INITIALIZED.load(Ordering::Relaxed) {
+        core::hint::spin_loop();
+    }
+
+    println!("CPU {} initializing", cpu_state.get_cpu_id());
     init_core(cpu_state.get_cpu_id(), &cpu_state.get_bootloader_config());
 
     // loop forever...
@@ -205,6 +213,7 @@ pub fn init(config: &Config) {
                 num_aps_up += 1;
             }
         }
+        core::hint::spin_loop();
     }
 
     SMP_INITIALIZED.store(true, Ordering::Relaxed);
