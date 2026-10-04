@@ -40,6 +40,10 @@ impl<'a, T> OnDemandArray<'a, T> {
             Err(e) => Err(e),
         }
     }
+
+    pub fn get_base_address(&self) -> VirtualAddress {
+        self.base_address
+    }
 }
 
 

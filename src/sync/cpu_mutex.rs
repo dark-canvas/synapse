@@ -10,9 +10,12 @@ const UNLOCKED : u32 = 0;
 
 #[allow(dead_code)]
 pub struct CpuMutex<T> {
-    owner: AtomicU32, // TODO: need to be able to copy CpuMutex and have each copy refer to the same owner address
+    // TODO: need to be able to provide the mutex to multiple code locations (i.e., multiple owners)
+    // Which means `owner` needs to be a pointer to an AtomicU32 (and poisoned and data)
+    // Or just pass a reference to the CpuMutex to the owners
+    owner: AtomicU32, 
     poisoned: AtomicBool,
-    data: UnsafeCell<T>, // REVISIT: the core rust mutex wraps this in an UnsafeCell; do we need to?
+    data: UnsafeCell<T>,
 }
 
 #[allow(dead_code)]

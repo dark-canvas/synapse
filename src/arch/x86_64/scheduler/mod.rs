@@ -3,9 +3,10 @@ pub mod task;
 use self::task::Task;
 use self::task::TaskList;
 use super::pager::VirtualAddress;
-use super::pager::get_kernel_cr3;
+use super::GlobalData;
+use crate::arch::x86_64::smp::cpu_state::CpuState;
 use crate::errors::ErrCode;
-use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
+//use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
 use crate::scheduler::Scheduler as SchedulerInterface;
 use crate::scheduler::Task as TaskInterface;
 
@@ -35,7 +36,16 @@ global_asm!(
     // save off the current task's context
     // see schduler::Task for the layout of the CURRENT_TASK struct
     "    push %rdi",
-    "    movq CURRENT_TASK(%rip), %rdi",
+    // TODO: calculate CURRENT_TASK by querying the current taskID from the cpu state, 
+    // multiply by the size of a CpuState, and add the offset
+    "    xorq %rdi, %rdi",
+    "    movl %gs:4, %edi",
+    "    imulq $24760, %rdi, %rdi",  // immediate value is size_of::<Task>()
+    "    push %rax",
+    "    movq $0xFFFFFFF010000000, %rax",
+    "    addq %rax, %rdi", // add the base of the task map
+    "    pop %rax",
+    //"    movq CURRENT_TASK(%rip), %rdi",
     // Task::registers (RegisterSnapshot) is the first field of Task, so we can just write to the start of the struct
     "    movq %rax, 0(%rdi)",   // RAX
     "    movq %rbx, 8(%rdi)",   // RBX
@@ -74,7 +84,15 @@ global_asm!(
 
     // Now switch to the next task (call into rust for this)
     // For now just use the same task
-    "    movq CURRENT_TASK(%rip), %rdi",
+    "    xorq %rdi, %rdi",
+    "    movl %gs:4, %edi",
+    "    imulq $24760, %rdi, %rdi",  // immediate value is size_of::<Task>()
+    "    push %rax",
+    "    movq $0xFFFFFFF010000000, %rax",
+    "    addq %rax, %rdi", // add the base of the task map
+    "    pop %rax",
+
+    //"    movq CURRENT_TASK(%rip), %rdi",
     "    movq 0(%rdi), %rax",   // RAX
     "    movq 8(%rdi), %rbx",   // RBX
     "    movq 16(%rdi), %rcx",  // RCX
@@ -112,32 +130,17 @@ global_asm!(
     options(att_syntax)
 );
 
+use crate::arch::x86_64::task_map::TASK_MAP_BASE_ADDRESS;
+const _: () = {
+    assert!(TASK_MAP_BASE_ADDRESS.0 == 0xFFFFFFF010000000, "Hardcoded task-map base needs updating in assembly");
+    assert!(core::mem::size_of::<Task>() == 24760, "Hardcoded Task size needs updating in assembly");
+};
+
 // Safe wrapper around the assembly function
 #[inline(always)]
 pub fn yield_task() {
     unsafe { yield_task_asm() }
 }
-
-// TODO: this likely isn't good enough as it could be accessed from the timer interrupt, 
-// and the task calling yield (or similar)
-// Either it needs to be wrapped in some safety, or the callers somehow guarantee safety
-// TODO: this actually isn't correct, as the tast list (which is a page-based-list) will take ownership 
-// of the task so this will need to point into the task list.
-pub static mut NULL_TASK: Task = Task {
-    id: 0,
-    registers: RegisterSnapshot::default(),
-    rip: 0,
-    rflags: 0x202, // Interrupt Enable flag
-    cr3: 0,
-    // TODO: this isn't currently populated when saving context, and 
-    // registers::rsp is actually the kernel stack pointer (and rip is the kernel intstruction 
-    // pointer))
-    kernel_stack_pointer: VirtualAddress(0)
-};
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut CURRENT_TASK: *mut Task = &raw mut NULL_TASK as *mut Task;
 
 pub struct Scheduler {
     tasks: TaskList 
@@ -154,6 +157,7 @@ impl Scheduler {
         // they also need to init the x2apic per each cpu
     }
 
+    // TODO: needs the task map!
     pub fn new() -> Self {
         let mut scheduler = Scheduler {
             tasks: TaskList::new().expect("Failed to create task list"),
@@ -162,6 +166,15 @@ impl Scheduler {
         // the registers here, as the first time we yield, we'll save off the current state of the kernel.
         // As multiple cores are supported this will likely need to change from a single static global 
         // to something per-cpu.
+        let mut task_map = GlobalData::get().task_map.lock().unwrap();
+        let task = task_map.new_task().unwrap();
+        // initialize the task structure?  It'll be saved on task switch...
+        //let id = task.get_id(); // TODO: this isn't initialized yet... and what should it be?
+        let task_index = task_map.get_index(task).unwrap();
+        let cpu_state = CpuState::get_local_cpu_state();
+        cpu_state.current_tid = task_index as u32;
+        println!("Set current task ID to {} for CPU {}", task_index, cpu_state.get_cpu_id());
+        /*
         scheduler.add_task(
             Task {
                 id: 0,
@@ -172,9 +185,7 @@ impl Scheduler {
                 kernel_stack_pointer: VirtualAddress(0)
             }
         ).expect("Failed to add kernel task to task list");
-        unsafe {
-            CURRENT_TASK = scheduler.tasks.head_ptr().unwrap() as *mut Task;
-        }
+        */
         scheduler
     }
 }
@@ -185,7 +196,7 @@ impl SchedulerInterface for Scheduler {
     // REVISTIT: this consumes task... is it okay?  Is it efficient (check the assembly)
     // TODO: I think it's not okay... the task comes form TaskMap and shouldn't ever be copied.
     // The lists should be of TaskID which can be used to index into the taskmap!
-    fn add_task(&mut self, task: Self::Task) -> Result<(), ErrCode> {
+    fn add_task(&mut self, task: &Self::Task) -> Result<(), ErrCode> {
         self.tasks.add(task.get_id())
     }
 }

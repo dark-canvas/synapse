@@ -8,6 +8,7 @@ use satus_struct::config::Config;
 use core::default::Default;
 use core::arch::asm;
 use num_traits::PrimInt;
+use crate::scheduler::TaskId;
 
 // TODO: implemenent and use something like ConfigPage in satus?
 
@@ -22,9 +23,13 @@ pub enum State {
 #[repr(C)]
 #[derive(Default)]
 pub struct CpuState {
-    pub apic_id: u8, // TODO: CpuId (but stored as a u8)
-    pub state: State,
-    pub config: Address, // Address of config from bootloader (struct needs to be default initializeable)
+    /* Offset */
+    /*  0 */ pub apic_id: u8, // TODO: CpuId (but stored as a u8)
+    /*  1 */ pub state: State,
+    // u8 here
+    // u8 here
+    /*  4 */ pub current_tid: TaskId, // u32
+    /*  8 */ pub config: Address, // Address of config from bootloader (struct needs to be default initializeable)
 }
 
 impl CpuState {
@@ -39,7 +44,7 @@ impl CpuState {
     }
 
     // TODO: pick a standard form for inline assembly (AT&T... look into the nostack, pure, readonly variables as well)
-    pub unsafe fn get_local_cpu_state() -> &'static mut CpuState {
+    pub fn get_local_cpu_state() -> &'static mut CpuState {
         let base_address: usize;
         unsafe {
             asm!(
@@ -80,7 +85,12 @@ where
 }
     
 // TODO: proper error codes for this... (return err if SMP not initialized?)
+// Or just assert, since it just shouldn't be called in that case, and can be avoided
 #[allow(dead_code)]
 pub fn get_cpu_id() -> Result<CpuId, ErrCode> {
     Ok( unsafe { get_cpu_state_at_offset::<u8>(0) } as CpuId )
+}
+
+pub fn get_current_task_id() -> TaskId {
+    ( unsafe { get_cpu_state_at_offset::<u32>(4) }) as TaskId
 }

@@ -63,7 +63,8 @@ pub fn init(config: &Config) {
     let cpu_config = &mut config.get_cpu_config();
     println!("Bootloader reports {} CPUs", cpu_config.get_num_cpus());
 
-    // allocate a CpuState for this CPU (the BSP)
+    // allocate a CpuState for this CPU (the BSP), as set it into the gsbase register
+    // Also enable fsgs base registers in cr4 (bit 16)
     // the APs will have theirs allocated and set in GS via the trampoline
     let bspCpuState = CpuState::get(0);
     bspCpuState.state = State::Initializing;
@@ -75,7 +76,12 @@ pub fn init(config: &Config) {
             "mov %edx, %eax",            // lower 32-bits to eax
             "shrq $32, %rdx",            // uper 32-bits in edx
             "wrmsr",
+            // enable fs/gs base registers
+            "movq %cr4, %rax",
+            "orq $0x10000, %rax",    // Set bit 16 (FSGSBASE)
+            "movq %rax, %cr4",            
             in(reg) bspCpuState,
+            out("rax") _, out("rdx") _, out("rcx") _,
             options(nostack, att_syntax)
         );
     }
@@ -247,9 +253,9 @@ unsafe fn startup_ap(
     //let stack_pointer = per_cpu_config.stack.as_ptr() as Address;
     //X86_PAGER.get().unwrap().show_address_debug(VirtualAddress(stack_pointer));
 
-    // TODO: populate
     let cpu_id = apic_id as CpuId;
     per_cpu_data::create_all(cpu_id);
+    // TODO: populate cpu_state w/ the taskmap
     let cpu_state = CpuState::get(cpu_id);
     let cpu_stack = CpuStack::get(cpu_id);
     cpu_state.apic_id = u8::try_from(apic_id).unwrap();
@@ -314,7 +320,7 @@ unsafe fn startup_ap_x2apic(
     let x2apic_icr_value = (apic_id as u64) << 32 | icr_low_value as u64;
     unsafe {
         x2apic_msr.write(x2apic_icr_value);
-    }  
+    }
 }
 
 unsafe fn startup_ap_lapic(

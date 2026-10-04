@@ -58,17 +58,18 @@ unsafe fn user_task_entry() {
     // iretd ? to return to ring3 code at the ring3 entry point
 }
 
-// TODO: this is stale now that we have TaskMap... the page-based list should be of TaskHandle?
-// TODO: should actually be a PageBasedQueue, anyway... FIFO, but also somehow with priorities.
-// Must be, at most, 4096 - 8 to fit into page-based-list
+// TODO: just round up to 32k?
 #[allow(dead_code)]
 pub struct Task {
-    pub registers: RegisterSnapshot,
-    pub rip: u64,
-    pub rflags: u64,
+    pub registers: RegisterSnapshot,     // set in yield_task assembly, don't move
+    pub rip: u64,                        // set in yeild task assembly, don't move
+    pub rflags: u64,                     // set in yield task assembly, don't move
     pub cr3: u64, // physical address and flags
+    pub user_gs_base: VirtualAddress,
     pub kernel_stack_pointer: VirtualAddress,
     pub id: u64, // need some way to lookup by id
+    pub kernel_stack: [u8; 16*1024],
+    pub io_bitmap: [u8; 8193],
 
     //parent: Option<&Task>, // or parent_id?
     // name?
@@ -85,6 +86,7 @@ pub type TaskList = PageBasedList<TaskId>;
 
 #[allow(dead_code)]
 impl Task {
+    /* 
     pub fn new_kernel_task(entry: Address, stack: VirtualAddress, stack_size: usize) -> Self {
         // REVISIT: this wouldn't have to be mut with rip and rflags were separate from registers..?
         let result = Task { 
@@ -101,6 +103,7 @@ impl Task {
         //result.registers.rsp = KERNEL_START - 0x1000; // Arbitr
         result
     }
+    */
 
     /*
     pub fn new_user_task(entry: Address) -> Self {
