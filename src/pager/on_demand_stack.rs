@@ -28,9 +28,8 @@ impl<'a, T: Copy> OnDemandStack<'a, T> {
         }
         let offset = core::mem::size_of::<T>() * self.num_items;
         let addr = self.base_address + offset;
-        let end = addr + core::mem::size_of::<T>();
-        let num_pages = ((end - addr) >> self.pager.get_page_size_log2()) + 1;
-        match self.pager.ensure_mapped_range(addr, num_pages as usize) {
+        let length = core::mem::size_of::<T>();
+        match self.pager.ensure_mapped_range(addr, length) {
             Ok(_) => {
                 unsafe { *(addr.0 as *mut T) = item; }
                 self.num_items += 1;
@@ -79,7 +78,7 @@ mod tests {
             pager.expect_ensure_mapped_range()
                 .with(
                     predicate::eq(VirtualAddress(base + index * core::mem::size_of::<u32>() as Address)),
-                    predicate::eq(1),
+                    predicate::eq(core::mem::size_of::<u32>()),
                 )
                 .times(1)
                 .returning(|_, _| Ok((None, None)));
@@ -103,7 +102,7 @@ mod tests {
         let base = backing.as_mut_ptr() as usize as Address;
 
         pager.expect_ensure_mapped_range()
-            .with(predicate::eq(VirtualAddress(base)), predicate::eq(1))
+            .with(predicate::eq(VirtualAddress(base)), predicate::eq(core::mem::size_of::<u32>()))
             .times(1)
             .returning(|_, _| Ok((None, None)));
 
@@ -129,7 +128,7 @@ mod tests {
         let mut attempts = 0;
 
         pager.expect_ensure_mapped_range()
-            .with(predicate::eq(VirtualAddress(base)), predicate::eq(1))
+            .with(predicate::eq(VirtualAddress(base)), predicate::eq(core::mem::size_of::<u32>()))
             .times(2)
             .returning(move |_, _| {
                 attempts += 1;
