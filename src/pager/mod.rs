@@ -71,7 +71,6 @@ pub trait Pager: Sync {
     fn get_virtual_address(&self, addr: PhysicalAddress) -> Result<VirtualAddress, ErrCode>;
     fn get_physical_address(&self, addr: VirtualAddress) -> Result<PhysicalAddress, ErrCode>;
 
-    // TODO: need to return an indication of whether the page was mapped or not
     fn ensure_mapped(&self, virtual_addr: VirtualAddress) -> Result<bool, ErrCode> {
         match get_pager().allocate_virtual(1, virtual_addr) {
             Ok(_) => Ok(true),
@@ -82,13 +81,21 @@ pub trait Pager: Sync {
 
     // TODO: need to return an indication of whether a range of memory was newly mapped or not
     // NOTE: this function doesn't not handle multiple mapping ranges
-    fn ensure_mapped_range(&self, virtual_addr: VirtualAddress, num_pages: usize) -> Result<(Option<VirtualAddress>, Option<VirtualAddress>), ErrCode> {
-        let virtual_addr = VirtualAddress(virtual_addr.0 & !get_pager().get_page_mask());
+    fn ensure_mapped_range(&self, virtual_addr: VirtualAddress, length: usize) -> Result<(Option<VirtualAddress>, Option<VirtualAddress>), ErrCode> {
+        if length == 0 {
+            return Ok((None, None));
+        }
+
+        let page_size = get_pager().get_page_size();
+        let page_mask = get_pager().get_page_mask();
+        let start_page = VirtualAddress(virtual_addr.0 & !page_mask);
+        let page_offset = virtual_addr.0 & page_mask;
+        let num_pages = (((page_offset + length as Address + page_size as Address - 1) / page_size as Address) as usize).max(1);
+
         let mut mapped_begin: Option<VirtualAddress> = None;
         let mut mapped_end: Option<VirtualAddress> = None;
-        let page_size = get_pager().get_page_size();
         for i in 0..num_pages {
-            let addr = virtual_addr + (i * page_size);
+            let addr = start_page + (i * page_size);
             if let Ok(true) = self.ensure_mapped(addr) {
                 if mapped_begin.is_none() {
                     mapped_begin = Some(addr);

@@ -26,15 +26,13 @@ impl<'a, T> OnDemandArray<'a, T> {
         }
         let offset = core::mem::size_of::<T>() * i;
         let base = self.base_address + offset;
-        let end = base + core::mem::size_of::<T>();
-        let num_pages = ((end - base) >> self.pager.get_page_size_log2()) + 1;
-        match self.pager.ensure_mapped_range(base, num_pages as usize) {
+        let length = core::mem::size_of::<T>();
+        match self.pager.ensure_mapped_range(base, length) {
             Ok((begin, end)) => unsafe {
                 // We could make zero'ing the memory optional, but it seems safer to just do it
                 if  begin.is_some() && end.is_some() {
                     core::ptr::write_bytes(begin.unwrap().0 as *mut u8, 0x0, (end.unwrap().0 - begin.unwrap().0) as usize);
                 }
-                //core::ptr::write_bytes(base.0 as *mut u8, 0x0, num_pages * self.pager.get_page_size());
                 Ok(&mut *(base.0 as *mut T))
             }
             Err(e) => Err(e),
@@ -85,7 +83,7 @@ mod tests {
         pager.expect_ensure_mapped_range()
             .with(
                 predicate::eq(VirtualAddress(0x1000000)), 
-                predicate::eq(1)
+                predicate::eq(core::mem::size_of::<HalfPage>())
             )
             .times(1)
             .returning(|_,_| Ok((None, None)) );
@@ -111,7 +109,7 @@ mod tests {
         pager.expect_ensure_mapped_range()
             .with(
                 predicate::eq(VirtualAddress(base + offset)), 
-                predicate::eq(1)
+                predicate::eq(core::mem::size_of::<HalfPage>())
             )
             .times(1)
             .returning(|_,_| Ok((None, None)) );
@@ -135,7 +133,7 @@ mod tests {
         pager.expect_ensure_mapped_range()
             .with(
                 predicate::eq(VirtualAddress(base + offset)), 
-                predicate::eq(1)
+                predicate::eq(core::mem::size_of::<HalfPage>())
             )
             .times(1)
             .returning(|_,_| Ok((None, None)) );
@@ -166,7 +164,7 @@ mod tests {
         pager.expect_ensure_mapped_range()
             .with(
                 predicate::eq(VirtualAddress(base + offset)), 
-                predicate::eq(1)
+                predicate::eq(core::mem::size_of::<HalfPage>())
             )
             .times(1)
             .returning(|_,_| Err(ErrCode::Unknown) );
