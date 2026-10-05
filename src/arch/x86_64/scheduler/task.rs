@@ -84,6 +84,19 @@ pub struct Task {
 
 pub type TaskList = PageBasedList<TaskId>;
 
+// TODO: move to task_id.rs, make only public to the module (will require moving task_map into module)
+pub fn get_task_index_from_id(task_id: TaskId) -> usize {
+    (task_id & 0xFFFFFFFF) as usize - 1
+}
+
+pub fn get_task_generation_from_id(task_id: TaskId) -> u32 {
+    (task_id >> 32) as u32
+}
+
+pub fn create_task_id(index: usize, generation: u32) -> TaskId {
+    ((generation as u64) << 32) | (index as u64) + 1
+}
+
 #[allow(dead_code)]
 impl Task {
     /* 
@@ -119,6 +132,6 @@ impl Task {
 
 impl TaskInterface for Task {
     fn get_id(&self) -> TaskId {
-        self.id as u32
+        self.id
     }
 }

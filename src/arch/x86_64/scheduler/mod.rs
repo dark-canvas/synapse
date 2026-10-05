@@ -39,7 +39,8 @@ global_asm!(
     // TODO: calculate CURRENT_TASK by querying the current taskID from the cpu state, 
     // multiply by the size of a CpuState, and add the offset
     "    xorq %rdi, %rdi",
-    "    movl %gs:4, %edi",
+    "    movl %gs:8, %edi",  // OR load the whole thing and and with 0xFFFFFFFF to get the loewr part (task index + 1)
+    "    subl $1, %edi",  // subtract 1 to get the task index
     "    imulq $24760, %rdi, %rdi",  // immediate value is size_of::<Task>()
     "    push %rax",
     "    movq $0xFFFFFFF010000000, %rax",
@@ -85,7 +86,8 @@ global_asm!(
     // Now switch to the next task (call into rust for this)
     // For now just use the same task
     "    xorq %rdi, %rdi",
-    "    movl %gs:4, %edi",
+    "    movl %gs:8, %edi",
+    "    subl $1, %edi",
     "    imulq $24760, %rdi, %rdi",  // immediate value is size_of::<Task>()
     "    push %rax",
     "    movq $0xFFFFFFF010000000, %rax",
@@ -170,10 +172,10 @@ impl Scheduler {
         let task = task_map.new_task().unwrap();
         // initialize the task structure?  It'll be saved on task switch...
         //let id = task.get_id(); // TODO: this isn't initialized yet... and what should it be?
-        let task_index = task_map.get_index(task).unwrap();
+        //let task_index = task_map.get_index(task).unwrap();
         let cpu_state = CpuState::get_local_cpu_state();
-        cpu_state.current_tid = task_index as u32;
-        println!("Set current task ID to {} for CPU {}", task_index, cpu_state.get_cpu_id());
+        cpu_state.current_tid = task.get_id();
+        println!("Set current task ID to {} for CPU {}", cpu_state.current_tid, cpu_state.get_cpu_id());
         /*
         scheduler.add_task(
             Task {

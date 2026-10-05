@@ -29,7 +29,14 @@ impl<'a, T> OnDemandArray<'a, T> {
         let end = base + core::mem::size_of::<T>();
         let num_pages = ((end - base) >> self.pager.get_page_size_log2()) + 1;
         match self.pager.ensure_mapped_range(base, num_pages as usize) {
-            Ok(_) => Ok(unsafe { &mut *(base.0 as *mut T) }),
+            Ok((begin, end)) => unsafe {
+                // We could make zero'ing the memory optional, but it seems safer to just do it
+                if  begin.is_some() && end.is_some() {
+                    core::ptr::write_bytes(begin.unwrap().0 as *mut u8, 0x0, (end.unwrap().0 - begin.unwrap().0) as usize);
+                }
+                //core::ptr::write_bytes(base.0 as *mut u8, 0x0, num_pages * self.pager.get_page_size());
+                Ok(&mut *(base.0 as *mut T))
+            }
             Err(e) => Err(e),
         }
     }

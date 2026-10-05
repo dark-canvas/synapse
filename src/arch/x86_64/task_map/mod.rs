@@ -5,13 +5,15 @@
 //! state.
 //! The task map consists of an array of task structures, and a stack of free task handles.
 
+// TODO: move this into the scheduler module?
+
 //use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
 use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
 use crate::errors::ErrCode;
 use crate::pager::Pager;
 use crate::pager::on_demand_array::OnDemandArray;
 use crate::pager::on_demand_stack::OnDemandStack;
-use crate::arch::x86_64::scheduler::task::Task;
+use crate::arch::x86_64::scheduler::task::{Task, create_task_id, get_task_generation_from_id};
 
 pub const TASK_MAP_BASE_ADDRESS: VirtualAddress = VirtualAddress(0xFFFFFFF010000000);
 const TASK_MAP_TOP: VirtualAddress = VirtualAddress(0xFFFFFFFFFFFFFFFF);
@@ -115,7 +117,14 @@ impl<'a> TaskMap<'a> {
             *byte = 0xa5;
         }
         // Initialize the IO bitmap (by defualt tasks have no IO permissions, so we set all bits to 0)
+        // TODO: how does this get set/enforced?
         task.io_bitmap.fill(0x0);
+        let generation = if task.id == 0 {
+            0
+        } else {
+            get_task_generation_from_id(task.id) + 1
+        };
+        task.id = create_task_id(self.get_index(task)?, generation);
         // TODO: create a separate address space for this task
         Ok(task)
     }

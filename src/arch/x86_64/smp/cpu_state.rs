@@ -28,8 +28,9 @@ pub struct CpuState {
     /*  1 */ pub state: State,
     // u8 here
     // u8 here
-    /*  4 */ pub current_tid: TaskId, // u32
-    /*  8 */ pub config: Address, // Address of config from bootloader (struct needs to be default initializeable)
+    // u32 here
+    /*  8 */ pub current_tid: TaskId, // u64
+    /* 16 */ pub config: Address, // Address of config from bootloader (struct needs to be default initializeable)
 }
 
 impl CpuState {
@@ -92,5 +93,5 @@ pub fn get_cpu_id() -> Result<CpuId, ErrCode> {
 }
 
 pub fn get_current_task_id() -> TaskId {
-    ( unsafe { get_cpu_state_at_offset::<u32>(4) }) as TaskId
+    ( unsafe { get_cpu_state_at_offset::<u64>(8) }) as TaskId
 }
