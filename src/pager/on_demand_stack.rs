@@ -82,7 +82,7 @@ mod tests {
                     predicate::eq(1),
                 )
                 .times(1)
-                .returning(|_, _| Ok(()));
+                .returning(|_, _| Ok((None, None)));
         }
 
         let mut stack = OnDemandStack::<u32>::new(pager.get_mock(), VirtualAddress(base), 3);
@@ -105,7 +105,7 @@ mod tests {
         pager.expect_ensure_mapped_range()
             .with(predicate::eq(VirtualAddress(base)), predicate::eq(1))
             .times(1)
-            .returning(|_, _| Ok(()));
+            .returning(|_, _| Ok((None, None)));
 
         let mut stack = OnDemandStack::<u32>::new(pager.get_mock(), VirtualAddress(base), 1);
         assert_eq!(stack.push(10), Ok(()));
@@ -133,7 +133,15 @@ mod tests {
             .times(2)
             .returning(move |_, _| {
                 attempts += 1;
-                if attempts == 1 { Err(ErrCode::Unknown) } else { Ok(()) }
+                if attempts == 1 { 
+                    Err(ErrCode::Unknown) 
+                } else { 
+                    Ok( (
+                        Some(VirtualAddress(base)), 
+                        Some(VirtualAddress(base + 4096))
+                        )
+                    )
+                }
             });
 
         let mut stack = OnDemandStack::<u32>::new(pager.get_mock(), VirtualAddress(base), 1);

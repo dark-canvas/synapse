@@ -88,7 +88,7 @@ mod tests {
                 predicate::eq(1)
             )
             .times(1)
-            .returning(|_,_| Ok(()) );
+            .returning(|_,_| Ok((None, None)) );
 
         let array = OnDemandArray::<HalfPage>::new(pager.get_mock(), VirtualAddress(0x1000000), 10);
         let result = array.get(0);
@@ -114,7 +114,7 @@ mod tests {
                 predicate::eq(1)
             )
             .times(1)
-            .returning(|_,_| Ok(()) );
+            .returning(|_,_| Ok((None, None)) );
 
         let array = OnDemandArray::<HalfPage>::new(pager.get_mock(), VirtualAddress(base), 10);
         let result = array.get(6);
@@ -138,7 +138,7 @@ mod tests {
                 predicate::eq(1)
             )
             .times(1)
-            .returning(|_,_| Ok(()) );
+            .returning(|_,_| Ok((None, None)) );
 
         let array = OnDemandArray::<HalfPage>::new(pager.get_mock(), VirtualAddress(base), 10);
         let result = array.get(3);
