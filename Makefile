@@ -13,7 +13,6 @@ kernel-debug:
 		ln -sf "$$LATEST" $(KERNEL_DEBUG_LINK); \
 	else \
 		echo "No runnable kernel test artifact found in $(KERNEL_DEPS_DIR)" >&2; \
-		exit 1; \
 	fi
 
 test: 
