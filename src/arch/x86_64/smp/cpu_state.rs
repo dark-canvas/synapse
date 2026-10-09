@@ -1,4 +1,5 @@
 use crate::Address;
+use crate::arch::x86_64::scheduler::Scheduler;
 use crate::page_based;
 use crate::types::CpuId;
 use crate::errors::ErrCode;
@@ -31,6 +32,7 @@ pub struct CpuState {
     // u32 here
     /*  8 */ pub current_tid: TaskId, // u64
     /* 16 */ pub config: Address, // Address of config from bootloader (struct needs to be default initializeable)
+    /*    */ pub scheduler: Scheduler,
 }
 
 impl CpuState {

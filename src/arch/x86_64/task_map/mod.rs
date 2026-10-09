@@ -76,7 +76,7 @@ impl<'a> TaskMap<'a> {
         self.tasks.get(handle as usize)
     }
 
-    pub fn new_task(&mut self) -> Result<&'static Task, ErrCode> {
+    pub fn new_task(&mut self) -> Result<&'static mut Task, ErrCode> {
         if let Ok(handle) = self.free_stack.pop() {
             // Implementation for creating a new task
             return self.construct(self.tasks.get_mut(handle as usize)?);
@@ -111,7 +111,7 @@ impl<'a> TaskMap<'a> {
         Ok(())
     }
 
-    fn construct(&self, task: &'static mut Task) -> Result<&'static Task, ErrCode> {
+    fn construct(&self, task: &'static mut Task) -> Result<&'static mut Task, ErrCode> {
         // Initialize the stack (TODO: make this runtime configurable)
         for byte in task.kernel_stack.iter_mut() {
             *byte = 0xa5;

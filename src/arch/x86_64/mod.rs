@@ -11,6 +11,7 @@ mod task_map;
 mod util;
 mod x2apic;
 
+use crate::arch::x86_64::scheduler::yield_task;
 use crate::pager::PAGER;
 
 use satus_struct::config::Config;
@@ -67,15 +68,10 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
         smp::init(&config); // TODO: pass in scheduler and taskmap? (need to set in per-state data)
     }
 
-     // TODO: pass the taskmap in here?
-    // Can all this be configured *after* smp::init, so that everything can be written directly 
-    // into the per-cpu-state?
-    // scheduler::new doesn't really do anyting other than create lists right now... it can 
-    // seemingly move anywhere...
-    // CpuMutex wont work properly until smp::init()... 
-    // Or create the scheduler and then pass it into smp::init to be consumed...
-    // smp::init can also wrap the taskmap in a mutex... 
-    Scheduler::new(/*&GlobalData::get().task_map*/);
+    let cpu_state = CpuState::get_local_cpu_state();
+
+    // must be initialized after smp::init() as it uses cpu_mutex (to access the task map)
+    cpu_state.scheduler = Scheduler::new(/*&GlobalData::get().task_map*/);
     // todo: scheduler::init() instead
 
     // start a new task for each of the tests?
@@ -84,6 +80,14 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
     // add it to the scheduler
 
     if is_bsp {
+        // as a test, create another task and yield to it, then yield back to the kernel task
+        cpu_state.scheduler.new_task(|| 
+            {
+                loop {
+                    println!("Hello from the test task!");
+                    yield_task();
+                }
+            }).unwrap();
         pager::run_time_tests(X86_PAGER.get().unwrap());
     }
 }

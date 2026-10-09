@@ -45,7 +45,7 @@ use crate::errors::ErrCode;
 use core::mem;
 use core::ptr;
 
-#[allow(dead_code)]
+#[derive(Default)]
 pub struct PageBasedList<T> {
     num_items: usize,
     head: Option<Address>,

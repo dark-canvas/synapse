@@ -6,7 +6,7 @@ use super::pager::VirtualAddress;
 use super::GlobalData;
 use crate::arch::x86_64::smp::cpu_state::CpuState;
 use crate::errors::ErrCode;
-//use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
+use crate::pager::PAGER;
 use crate::scheduler::Scheduler as SchedulerInterface;
 use crate::scheduler::Task as TaskInterface;
 
@@ -33,11 +33,9 @@ global_asm!(
     // restore the next task's context
     // iretq to the next task
 
-    // save off the current task's context
-    // see schduler::Task for the layout of the CURRENT_TASK struct
     "    push %rdi",
-    // TODO: calculate CURRENT_TASK by querying the current taskID from the cpu state, 
-    // multiply by the size of a CpuState, and add the offset
+    // calculate the current task pointer by querying the current taskID from the cpu state, 
+    // multiply by the size of a Task, and add the task map base address to it.
     "    xorq %rdi, %rdi",
     "    movl %gs:8, %edi",  // OR load the whole thing and and with 0xFFFFFFFF to get the loewr part (task index + 1)
     "    subl $1, %edi",  // subtract 1 to get the task index
@@ -46,19 +44,20 @@ global_asm!(
     "    movq $0xFFFFFFF010000000, %rax",
     "    addq %rax, %rdi", // add the base of the task map
     "    pop %rax",
-    //"    movq CURRENT_TASK(%rip), %rdi",
+
     // Task::registers (RegisterSnapshot) is the first field of Task, so we can just write to the start of the struct
     "    movq %rax, 0(%rdi)",   // RAX
     "    movq %rbx, 8(%rdi)",   // RBX
     "    movq %rcx, 16(%rdi)",  // RCX
     "    movq %rdx, 24(%rdi)",  // RDX
     "    movq %rsi, 32(%rdi)",  // RSI
-    // RDI contains the CURRENT_TASK current, but the original value was pushed (above) and 
+    // RDI contains the current task pointer, but the original value was pushed (above) and 
     // is handled later (below) -> 40(%rdi)
     "    movq %rbp, 48(%rdi)", // RBP 
 
-    // save rsp into CURRENT_TASK, but remember to add 8 to skip over the push of 
-    // rdi we did above (this effectively saves the return address of the yield_task call into the CURRENT_TASK struct)
+    // save rsp into the current task, but remember to add 8 to skip over the push of 
+    // rdi we did above.  By doing this, we save the stack position such that a pop will
+    // return to the return address of this yield_task call)
     "    leaq 8(%rsp), %rax", // RSP 
     "    movq %rax, 56(%rdi)", // RSP 
 
@@ -71,7 +70,6 @@ global_asm!(
     "    movq %r14, 112(%rdi)",  // R14
     "    movq %r15, 120(%rdi)",  // R15
     // After Task::registers comes rip and rflags
-    // 0(rsp) == rdi currently
     
     "    movq 8(%rsp), %rax", // RIP is on the stack at the return address, which is at RBP (after the push above)
     "    movq %rax, 128(%rdi)", // RIP (need to get return address from stack)
@@ -83,25 +81,22 @@ global_asm!(
     "    pop %rax",
     "    movq %rax, 40(%rdi)", // RDI
 
-    // Now switch to the next task (call into rust for this)
-    // For now just use the same task
+    "    call scheduler_get_next_task", // call into rust to get the next task to run
+
+    // This code (resolving a task_id to a Task*) is exactly the same as above.
+    // Might be good to have a function (or maybe it can be emitted by a macro)
     "    xorq %rdi, %rdi",
     "    movl %gs:8, %edi",
     "    subl $1, %edi",
     "    imulq $24760, %rdi, %rdi",  // immediate value is size_of::<Task>()
-    "    push %rax",
     "    movq $0xFFFFFFF010000000, %rax",
     "    addq %rax, %rdi", // add the base of the task map
-    "    pop %rax",
-
-    //"    movq CURRENT_TASK(%rip), %rdi",
+ 
     "    movq 0(%rdi), %rax",   // RAX
     "    movq 8(%rdi), %rbx",   // RBX
     "    movq 16(%rdi), %rcx",  // RCX
     "    movq 24(%rdi), %rdx",  // RDX
     "    movq 32(%rdi), %rsi",  // RSI
-    // RDI contains the CURRENT_TASK current, but the original value was pushed (above) and 
-    // is handled later (below) -> 40(%rdi)
     "    movq 48(%rdi), %rbp", // RBP 
     "    movq 56(%rdi), %rsp", // RSP
     "    movq 64(%rdi), %r8",   // R8
@@ -112,20 +107,9 @@ global_asm!(
     "    movq 104(%rdi), %r13",  // R13
     "    movq 112(%rdi), %r14",  // R14
     "    movq 120(%rdi), %r15",  // R15
-    
-    // What to do about RIP?  Currently we only have tasks switching by calling yield task, 
-    // which means if/when we switch RSP to a new task, it'll be pointing to a spot where the 
-    // return address is on the stack..
-    // TODO:
-    // pop the current return address
-    // push the new return address on the stack
-
-
-    //"    movq 8(%rsp), %rax", // RIP is on the stack at the return address, which is at RBP (after the push above)
-    //"    movq %rax, 128(%rdi)", // RIP (need to get return address from stack)
-    
+   
     "    movq 136(%rdi), %rax", // RFLAGS
-    "    push %rax",
+    "    push %rax", 
     "    popfq",
 
     "    ret",
@@ -144,51 +128,62 @@ pub fn yield_task() {
     unsafe { yield_task_asm() }
 }
 
+
+#[unsafe(no_mangle)]
+pub extern "C" fn scheduler_get_next_task() {
+    let cpu_state = CpuState::get_local_cpu_state();
+    let scheduler = &mut cpu_state.scheduler;
+    if let Ok(next_task_id) = scheduler.tasks.dequeue() {
+        // Add back to the end (TODO: if still able to run)
+        scheduler.tasks.enqueue(cpu_state.current_tid).unwrap();
+        cpu_state.current_tid = next_task_id;
+        return;
+    }
+}
+
+#[used]
+static SCHEDULER_GET_NEXT_TASK_REF: unsafe extern "C" fn() = scheduler_get_next_task;
+
+//#[derive(Default)]
 pub struct Scheduler {
-    tasks: TaskList 
+    tasks: TaskList,
+}
+
+impl Default for Scheduler {
+    fn default() -> Self {
+        Self {
+            tasks: TaskList::new(crate::pager::get_pager()),
+        }
+    }
 }
 
 #[allow(dead_code)]
 impl Scheduler {
-    pub fn init() {
-        // create a new scheduler per each CPU
-        // set config.cpu_config.kernel_ap_entry to something that executes the scheduler
-        // set config.cpu_config.ap_ready to true to unblock them
-
-        // or does the above belong in a cpu init section?  Because there's more than just scheduling...
-        // they also need to init the x2apic per each cpu
-    }
-
-    // TODO: needs the task map!
+    // REVISIT: pass in the taskmap?  Or continue to get it from GlobalData?
     pub fn new() -> Self {
-        let mut scheduler = Scheduler {
-            tasks: TaskList::new().expect("Failed to create task list"),
+        let scheduler = Scheduler {
+            tasks: TaskList::new(*PAGER.borrow()),
         };
         // Create a task for what is running right now (i.e., the kernel).  We don't need to initialize 
         // the registers here, as the first time we yield, we'll save off the current state of the kernel.
-        // As multiple cores are supported this will likely need to change from a single static global 
-        // to something per-cpu.
         let mut task_map = GlobalData::get().task_map.lock().unwrap();
         let task = task_map.new_task().unwrap();
-        // initialize the task structure?  It'll be saved on task switch...
-        //let id = task.get_id(); // TODO: this isn't initialized yet... and what should it be?
-        //let task_index = task_map.get_index(task).unwrap();
         let cpu_state = CpuState::get_local_cpu_state();
         cpu_state.current_tid = task.get_id();
         println!("Set current task ID to {} for CPU {}", cpu_state.current_tid, cpu_state.get_cpu_id());
-        /*
-        scheduler.add_task(
-            Task {
-                id: 0,
-                registers: RegisterSnapshot::default(),
-                rip: 0,
-                rflags: 0x202, // Interrupt Enable flag
-                cr3: get_kernel_cr3(),
-                kernel_stack_pointer: VirtualAddress(0)
-            }
-        ).expect("Failed to add kernel task to task list");
-        */
+
         scheduler
+    }
+
+    pub fn new_task<F>(&mut self, f: F) -> Result<(), ErrCode>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let mut task_map = GlobalData::get().task_map.lock().unwrap();
+        let task: &mut Task = task_map.new_task().unwrap();
+        task.initialize(f);
+        self.tasks.enqueue(task.get_id()).unwrap();
+        Ok(())
     }
 }
 
@@ -199,6 +194,7 @@ impl SchedulerInterface for Scheduler {
     // TODO: I think it's not okay... the task comes form TaskMap and shouldn't ever be copied.
     // The lists should be of TaskID which can be used to index into the taskmap!
     fn add_task(&mut self, task: &Self::Task) -> Result<(), ErrCode> {
-        self.tasks.add(task.get_id())
+        self.tasks.enqueue(task.get_id()).unwrap();
+        Ok(())
     }
 }

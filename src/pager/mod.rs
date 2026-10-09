@@ -59,7 +59,7 @@ pub trait Pager: Sync {
     // Or just use the UEFI crate?
     //fn allocate_physical_if<F>(&self, page_cond: F) -> Result<PhysicalAddress, ErrCode>
     //  where F: Fn(PhysicalAddress) -> bool;
-    fn free_physical(&self, addr: PhysicalAddress)-> Result<(), ErrCode>;
+    fn free_physical(&self, addr: PhysicalAddress) -> Result<(), ErrCode>;
 
     fn allocate_virtual(&self, num: usize, to_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode>;
     fn free_virtual(&self, num: usize, base_addr: VirtualAddress) -> Result<(), ErrCode>;
@@ -107,6 +107,46 @@ pub trait Pager: Sync {
     }
 }
 
+impl<T> Pager for &T
+where
+    T: Pager + ?Sized,
+{
+    fn get_page_size(&self) -> usize {
+        (*self).get_page_size()
+    }
+
+    fn get_page_mask(&self) -> Address {
+        (*self).get_page_mask()
+    }
+
+    fn allocate_physical(&self) -> Result<PhysicalAddress, ErrCode> {
+        (*self).allocate_physical()
+    }
+
+    fn free_physical(&self, addr: PhysicalAddress) -> Result<(), ErrCode> {
+        (*self).free_physical(addr)
+    }
+
+    fn allocate_virtual(&self, num: usize, to_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode> {
+        (*self).allocate_virtual(num, to_addr)
+    }
+
+    fn free_virtual(&self, num: usize, base_addr: VirtualAddress) -> Result<(), ErrCode> {
+        (*self).free_virtual(num, base_addr)
+    }
+
+    fn map_physical_to_virtual(&self, phys: PhysicalAddress, virt: VirtualAddress) -> Result<(), ErrCode> {
+        (*self).map_physical_to_virtual(phys, virt)
+    }
+
+    fn get_virtual_address(&self, addr: PhysicalAddress) -> Result<VirtualAddress, ErrCode> {
+        (*self).get_virtual_address(addr)
+    }
+
+    fn get_physical_address(&self, addr: VirtualAddress) -> Result<PhysicalAddress, ErrCode> {
+        (*self).get_physical_address(addr)
+    }
+}
 struct NullPager{}
 
 impl Pager for NullPager {
