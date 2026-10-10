@@ -7,7 +7,6 @@
 
 // TODO: move this into the scheduler module?
 
-//use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
 use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
 use crate::errors::ErrCode;
 use crate::pager::Pager;
@@ -27,28 +26,11 @@ const TASK_MAP_FREE_STACK_BASE: VirtualAddress = VirtualAddress(TASK_MAP_TOP.0 -
 
 pub type TaskHandle = u32;
 
-// TODO: there's multiple task implemenations now...
-// The task trait
-// x86_64::scheduler::Task (which the scheduler/yield code already uses)
-// This one (which contains needed things which aren't in the above one)
-// TODO: create a single Task structure somewhere (proably in scheduler... should task_map be in scheduler?)
-/* 
-pub struct Task {
-    kernel_stack: [u8; 16*1024],
-    io_bitmap: [u8; 8193],
-    cr3: PhysicalAddress,
-    gs_base: VirtualAddress,
-    registers: RegisterSnapshot,
-    //fp_registers: FPRegisterSnapshot,
-    //avx_snapshot: AVXRegisterSnapshot,
-}*/
-
 const _: () = {
     assert!(TASK_MAP_ARRAY_SIZE + TASK_MAP_FREE_STACK_SIZE <= TASK_MAP_SIZE, "Task map is too small!");
     assert!(TASK_MAP_MAX_TASKS <= TaskHandle::MAX as usize, "Task map larger than TaskHandle can support!");
 };
 
-// TODO: this is shared between CPUs and so will need a CPU mutex
 pub struct TaskMap<'a> {
     tasks: OnDemandArray::<'a, Task>,
     free_stack: OnDemandStack::<'a, TaskHandle>,
