@@ -14,6 +14,8 @@ ALLOWED_MODULES = {
     "scheduler",
     "smp",
     "sync",
+    "timers",
+    "util"
 }
 
 ALLOWED_PLATFORMS = {"x86-64", "amd64"}

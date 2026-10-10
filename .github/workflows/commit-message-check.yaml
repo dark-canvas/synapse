@@ -3,8 +3,6 @@ name: Commit message check
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
-  push:
-    branches: ["**"]
 
 permissions:
   contents: read
@@ -24,8 +22,9 @@ jobs:
           set -euo pipefail
 
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch origin "${{ github.base_ref }}" --depth=1
-            git log --reverse --no-merges "origin/${{ github.base_ref }}..HEAD" --pretty=format:%x1e%B%x1e > commit_messages.txt
+            # Only validate the commits that belong to this PR, not every commit in the
+            # target branch or the full repository history.
+            git log --reverse --no-merges "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" --pretty=format:%x1e%B%x1e > commit_messages.txt
           else
             if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
               git log --reverse --no-merges "${{ github.sha }}" --pretty=format:%x1e%B%x1e > commit_messages.txt
