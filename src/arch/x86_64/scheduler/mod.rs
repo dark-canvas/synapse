@@ -2,7 +2,7 @@ pub mod task;
 
 use self::task::Task;
 use self::task::TaskList;
-use super::pager::VirtualAddress;
+use crate::pager::VirtualAddress;
 use super::GlobalData;
 use crate::arch::x86_64::smp::cpu_state::CpuState;
 use crate::errors::ErrCode;

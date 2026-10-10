@@ -1,7 +1,7 @@
 use crate::types::CpuId;
 use super::per_cpu_data;
 use crate::pager::PAGER;
-use crate::arch::x86_64::smp::VirtualAddress;
+use crate::pager::VirtualAddress;
 
 
 pub struct CpuStack {

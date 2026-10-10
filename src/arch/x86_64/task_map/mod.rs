@@ -7,8 +7,8 @@
 
 // TODO: move this into the scheduler module?
 
-use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
 use crate::errors::ErrCode;
+use crate::pager::{PhysicalAddress, VirtualAddress};
 use crate::pager::Pager;
 use crate::pager::on_demand_array::OnDemandArray;
 use crate::pager::on_demand_stack::OnDemandStack;

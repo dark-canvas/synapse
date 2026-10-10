@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 use crate::errors::ErrCode;
-use crate::arch::x86_64::pager::VirtualAddress;
 use crate::pager::Pager;
+use crate::pager::VirtualAddress;
 
 pub struct OnDemandStack<'a, T: Copy> {
     pager: &'a dyn Pager,
@@ -57,7 +57,7 @@ mod tests {
     use mockall::predicate;
     use std::boxed::Box;
 
-    use crate::arch::x86_64::pager::VirtualAddress;
+    use crate::pager::VirtualAddress;
     use crate::pager::test_helpers::TestPager;
     use crate::pager::MockPager;
     use crate::Address;

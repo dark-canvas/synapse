@@ -79,9 +79,9 @@ use mockall::predicate::*;
 
 use crate::stack::{Stack, SimpleStack, EXPAND_UP};
 use crate::types::Address;
+use crate::pager::VirtualAddress;
 
 use super::address_aggregator::{AddressAggregator, PageAggregator};
-use super::VirtualAddress;
 use super::PAGE_SIZE_1GB;
 pub const ADDRESSES_PER_PAGE: usize = 512; // make this a const in pager?
 

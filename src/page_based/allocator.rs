@@ -1,7 +1,7 @@
 use core::default::Default;
-use crate::arch::x86_64::pager::VirtualAddress;
 use crate::Address;
 use crate::pager::PAGER;
+use crate::pager::VirtualAddress;
 
 // TODO: return Result
 // TODO: ensure sizeof<T> is < PAGE_SIZE

@@ -62,7 +62,7 @@ use satus_struct::memory_map::{MemoryMap, MemoryRegionType};
 
 use crate::errors::ErrCode;
 use crate::pager::PagerError;
-
+use crate::pager::{PhysicalAddress, VirtualAddress};
 
 use crate::pager::Pager as PagerInterface;
 use crate::types::Address;
@@ -109,117 +109,6 @@ const PAGE_STACK_1GB_MAX_PAGES: usize = 512;
 const PAGE_AGGREGATOR_2MB_BASE: Address = 0xFFFFFFD040000000;
 const PAGE_AGGREGATOR_1GB_BASE: Address = 0xFFFFFFE000200000;
 const PAGE_AGGREGATOR_512GB_BASE: Address = 0xFFFFFFE000202000;
-
-// TODO: move these into the common pager space (not x86_64 specific)
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct PhysicalAddress(pub Address);
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct VirtualAddress(pub Address);
-
-impl Add<usize> for VirtualAddress {
-    type Output = VirtualAddress;
-
-    fn add(self, rhs: usize) -> Self::Output {
-        VirtualAddress(self.0 + rhs as Address)
-    }
-}
-
-impl Add<usize> for PhysicalAddress {
-    type Output = PhysicalAddress;
-
-    fn add(self, rhs: usize) -> Self::Output {
-        PhysicalAddress(self.0 + rhs as Address)
-    }
-}
-
-impl AddAssign<usize> for VirtualAddress {
-    fn add_assign(&mut self, rhs: usize) {
-        self.0 += rhs as Address;
-    }
-}
-
-impl AddAssign<usize> for PhysicalAddress {
-    fn add_assign(&mut self, rhs: usize) {
-        self.0 += rhs as Address;
-    }
-}
-
-impl Sub<usize> for VirtualAddress {
-    type Output = VirtualAddress;
-
-    fn sub(self, rhs: usize) -> Self::Output {
-        VirtualAddress(self.0 - rhs as Address)
-    }
-}
-
-impl Sub<usize> for PhysicalAddress {
-    type Output = PhysicalAddress;
-
-    fn sub(self, rhs: usize) -> Self::Output {
-        PhysicalAddress(self.0 - rhs as Address)
-    }
-}
-
-// subtracting addresses (eg. top - bottom, or item - base) yields a size
-impl Sub<VirtualAddress> for VirtualAddress {
-    type Output = usize;
-
-    fn sub(self, rhs: VirtualAddress) -> Self::Output {
-        (self.0 - rhs.0) as usize
-    }
-}
-
-impl Sub<PhysicalAddress> for PhysicalAddress {
-    type Output = usize;
-
-    fn sub(self, rhs: PhysicalAddress) -> Self::Output {
-        (self.0 - rhs.0) as usize
-    }
-}
-
-impl PhysicalAddress {
-    pub fn as_pointer<T>(&self) -> *const T {
-        self.0 as usize as *const T
-    }
-
-    pub fn as_mut_pointer<T>(&self) -> *mut T {
-        self.0 as usize as *mut T
-    }
-}
-
-impl VirtualAddress {
-    pub fn as_pointer<T>(&self) -> *const T {
-        self.0 as usize as *const T
-    }
-
-    pub fn as_mut_pointer<T>(&self) -> *mut T {
-        self.0 as usize as *mut T
-    }
-
-    pub fn as_reference<T>(&self) -> &T {
-        unsafe { &*self.as_pointer::<T>() }
-    }
-
-    pub fn as_mut_reference<T>(&self) -> &mut T {
-        unsafe { &mut *self.as_mut_pointer::<T>() }
-    }
-
-    /*
-    pub fn as_mut_reference<'a, T>(&'a self) -> &'a mut T {
-        unsafe { &mut *(self.0 as *mut T) }
-    }
-        */
-
-    /*
-    pub fn to_reference<T>(self) -> &'static T {
-        unsafe { &*self.as_pointer::<T>() }
-    }
-
-    pub fn to_mut_reference<T>(self) -> &'static mut T {
-        unsafe { &mut *self.as_mut_pointer::<T>() }
-    }
-        */
-}
 
 #[derive(PartialEq, Copy, Clone)]
 pub enum PageType {

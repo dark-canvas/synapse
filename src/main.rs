@@ -24,7 +24,7 @@ mod stack;
 mod sync;
 mod types;
 
-use types::Address;
+pub use types::{Address, CpuId};
 
 use core::arch::asm;
 use core::panic::PanicInfo;

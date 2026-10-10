@@ -1,5 +1,5 @@
 use crate::types::CpuId;
-use super::VirtualAddress;
+use crate::pager::VirtualAddress;
 use crate::arch::x86_64::gdt::ExceptionStackIndex;
 use crate::arch::x86_64::gdt::GDT_SIZE;
 use crate::pager::PAGER;

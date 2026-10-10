@@ -75,7 +75,7 @@ mod tests {
     use mockall::predicate;
     use std::cmp::Ordering;
 
-    use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
+    use crate::pager::{PhysicalAddress, VirtualAddress};
     use crate::pager::MockPager;
     use crate::pager::test_helpers::TestPager;
     use crate::pager::test_helpers::PhysicalVirtualMapping;

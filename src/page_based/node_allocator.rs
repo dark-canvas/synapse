@@ -1,8 +1,8 @@
 
 use core::marker::PhantomData;
-use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
 use crate::errors::ErrCode;
 use crate::pager::Pager;
+use crate::pager::{PhysicalAddress, VirtualAddress};
 use satus_struct::types::Address;
 // TODO: need to determine where to use physical vs virtual addresses
 
@@ -106,7 +106,7 @@ mod tests {
     use std::mem::drop;
     use mockall::predicate;
 
-    use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
+    use crate::pager::{PhysicalAddress, VirtualAddress};
     use crate::pager::MockPager;
     use crate::pager::test_helpers::TestPager;
     use crate::pager::test_helpers::PhysicalVirtualMapping;

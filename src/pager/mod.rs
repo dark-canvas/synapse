@@ -2,7 +2,9 @@ use atomic_refcell::AtomicRefCell;
 use thiserror::Error;
 use crate::Address;
 use crate::errors::ErrCode;
-use crate::arch::x86_64::pager::{PhysicalAddress, VirtualAddress};
+
+pub use self::physical_address::PhysicalAddress;
+pub use self::virtual_address::VirtualAddress;
 
 #[cfg(test)]
 use mockall::*;
@@ -15,6 +17,8 @@ use std::sync::LazyLock;
 pub mod test_helpers;
 pub mod on_demand_array;
 pub mod on_demand_stack;
+pub mod physical_address;
+pub mod virtual_address;
 
 #[allow(dead_code)]
 #[derive(Error, Debug, PartialEq)]

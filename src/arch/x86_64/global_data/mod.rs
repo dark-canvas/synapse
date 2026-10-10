@@ -1,5 +1,5 @@
-use crate::arch::x86_64::pager::VirtualAddress;
 use crate::pager::Pager;
+use crate::pager::VirtualAddress;
 
 use crate::sync::cpu_mutex::CpuMutex;
 use super::task_map::TaskMap;
