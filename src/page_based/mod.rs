@@ -10,6 +10,9 @@
 /// Additionally, these structures are intentionally designed to be re-used as components of other 
 /// structures.  As an example, a Mutex is really just a queue of waiting taskIDs with a unique 
 /// header.
-pub mod allocator;
-pub mod node_allocator;
-pub mod queue;
+mod allocator;
+mod node_allocator;
+mod queue;
+
+pub use queue::Queue;
+pub use allocator::new_at;

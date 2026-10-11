@@ -38,7 +38,7 @@ pub struct CpuState {
 impl CpuState {
     // or set config after?
     pub fn new(id: CpuId) -> &'static mut CpuState {
-        page_based::allocator::new_at::<CpuState>( per_cpu_data::get_cpu_state_base(id) )
+        page_based::new_at::<CpuState>( per_cpu_data::get_cpu_state_base(id) )
     }
 
     pub fn get(id: CpuId) -> &'static mut CpuState {

@@ -1,6 +1,6 @@
 use crate::arch::x86_64::util::register_snapshot::RegisterSnapshot;
 use crate::arch::x86_64::X86_PAGER;
-use crate::page_based::queue::Queue;
+use crate::page_based::Queue;
 use crate::pager::Pager;
 use crate::pager::VirtualAddress;
 use crate::scheduler::Task as TaskInterface;
