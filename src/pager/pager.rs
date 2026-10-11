@@ -1,0 +1,177 @@
+use atomic_refcell::AtomicRefCell;
+use thiserror::Error;
+use crate::Address;
+use crate::errors::ErrCode;
+use crate::pager::{PhysicalAddress, VirtualAddress};
+
+#[cfg(test)]
+use mockall::*;
+#[cfg(test)]
+use mockall::predicate::*;
+#[cfg(test)]
+use std::sync::LazyLock;
+
+#[allow(dead_code)]
+#[derive(Error, Debug, PartialEq)]
+pub enum PagerError {
+    #[error("physical address not found")]
+    PhysicalAddressNotFound(PhysicalAddress),
+    #[error("virtual address not found")]
+    VirtualAddressNotFound(VirtualAddress),
+    #[error("unmapped virtual address")]
+    UnmappedVirtualAddress(VirtualAddress),
+    #[error("virtual address already mapped")]
+    VirtualAddressAlreadyMapped(VirtualAddress),
+}
+
+///static Lazy<&dyn Pager> = Lazy::new(|| { /* pager... */ }
+
+// Defines a generic cross-platform pager implementation usble by certain primatives like page_based_list
+// The pager is global, and so must make use of interior mutability.
+// Consider:
+// - Returns physical, or virtual, or both?
+// - Exposes mapping routines?
+#[allow(dead_code)]
+#[cfg_attr(test, automock)]
+pub trait Pager: Sync {
+    fn get_page_size(&self) -> usize;
+    fn get_page_mask(&self) -> Address {
+        (self.get_page_size() - 1) as Address
+    }
+    fn get_page_size_log2(&self) -> usize {
+        /// Implementations will likely want to override this, as the result is a static number
+        let page_size = self.get_page_size();
+        let mut log2 = 0;
+        let mut size = page_size;
+        while size > 1 {
+            size >>= 1;
+            log2 += 1;
+        }
+        log2
+    }
+
+    fn allocate_physical(&self) -> Result<PhysicalAddress, ErrCode>;
+    // Or just use the UEFI crate?
+    //fn allocate_physical_if<F>(&self, page_cond: F) -> Result<PhysicalAddress, ErrCode>
+    //  where F: Fn(PhysicalAddress) -> bool;
+    fn free_physical(&self, addr: PhysicalAddress) -> Result<(), ErrCode>;
+
+    fn allocate_virtual(&self, num: usize, to_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode>;
+    fn free_virtual(&self, num: usize, base_addr: VirtualAddress) -> Result<(), ErrCode>;
+
+    fn map_physical_to_virtual(&self, phys: PhysicalAddress, virt: VirtualAddress) -> Result<(), ErrCode>;
+
+    // TODO: at least get physical should reutrn an Option... what about get_virtual?
+    // For portability, they should both return Option
+    fn get_virtual_address(&self, addr: PhysicalAddress) -> Result<VirtualAddress, ErrCode>;
+    fn get_physical_address(&self, addr: VirtualAddress) -> Result<PhysicalAddress, ErrCode>;
+
+    fn ensure_mapped(&self, virtual_addr: VirtualAddress) -> Result<bool, ErrCode> {
+        match get_pager().allocate_virtual(1, virtual_addr) {
+            Ok(_) => Ok(true),
+            Err(ErrCode::Pager(PagerError::VirtualAddressAlreadyMapped(_))) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    // TODO: need to return an indication of whether a range of memory was newly mapped or not
+    // NOTE: this function doesn't not handle multiple mapping ranges
+    fn ensure_mapped_range(&self, virtual_addr: VirtualAddress, length: usize) -> Result<(Option<VirtualAddress>, Option<VirtualAddress>), ErrCode> {
+        if length == 0 {
+            return Ok((None, None));
+        }
+
+        let page_size = get_pager().get_page_size();
+        let page_mask = get_pager().get_page_mask();
+        let start_page = VirtualAddress(virtual_addr.0 & !page_mask);
+        let page_offset = virtual_addr.0 & page_mask;
+        let num_pages = (((page_offset + length as Address + page_size as Address - 1) / page_size as Address) as usize).max(1);
+
+        let mut mapped_begin: Option<VirtualAddress> = None;
+        let mut mapped_end: Option<VirtualAddress> = None;
+        for i in 0..num_pages {
+            let addr = start_page + (i * page_size);
+            if let Ok(true) = self.ensure_mapped(addr) {
+                if mapped_begin.is_none() {
+                    mapped_begin = Some(addr);
+                }
+                mapped_end = Some(addr + page_size);
+            }
+        }
+        Ok((mapped_begin, mapped_end))
+    }
+}
+
+impl<T> Pager for &T
+where
+    T: Pager + ?Sized,
+{
+    fn get_page_size(&self) -> usize {
+        (*self).get_page_size()
+    }
+
+    fn get_page_mask(&self) -> Address {
+        (*self).get_page_mask()
+    }
+
+    fn allocate_physical(&self) -> Result<PhysicalAddress, ErrCode> {
+        (*self).allocate_physical()
+    }
+
+    fn free_physical(&self, addr: PhysicalAddress) -> Result<(), ErrCode> {
+        (*self).free_physical(addr)
+    }
+
+    fn allocate_virtual(&self, num: usize, to_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode> {
+        (*self).allocate_virtual(num, to_addr)
+    }
+
+    fn free_virtual(&self, num: usize, base_addr: VirtualAddress) -> Result<(), ErrCode> {
+        (*self).free_virtual(num, base_addr)
+    }
+
+    fn map_physical_to_virtual(&self, phys: PhysicalAddress, virt: VirtualAddress) -> Result<(), ErrCode> {
+        (*self).map_physical_to_virtual(phys, virt)
+    }
+
+    fn get_virtual_address(&self, addr: PhysicalAddress) -> Result<VirtualAddress, ErrCode> {
+        (*self).get_virtual_address(addr)
+    }
+
+    fn get_physical_address(&self, addr: VirtualAddress) -> Result<PhysicalAddress, ErrCode> {
+        (*self).get_physical_address(addr)
+    }
+}
+struct NullPager{}
+
+impl Pager for NullPager {
+    fn get_page_size(&self) -> usize { 0 }
+    fn allocate_physical(&self) -> Result<PhysicalAddress, ErrCode> { Err(ErrCode::Unimplemented) }
+    fn free_physical(&self, _addr: PhysicalAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn allocate_virtual(&self, _num: usize, _to_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode> { Err(ErrCode::Unimplemented) }
+    fn free_virtual(&self, _num: usize, _base_addr: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn map_physical_to_virtual(&self, _phys: PhysicalAddress, _virt: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+    fn get_virtual_address(&self, _addr: PhysicalAddress) -> Result<VirtualAddress, ErrCode> { Err(ErrCode::Unimplemented) }
+    fn get_physical_address(&self, _addr: VirtualAddress) -> Result<PhysicalAddress, ErrCode> { Err(ErrCode::Unimplemented) }
+}
+
+// The PAGER static global is expected to be replaced with the real, arch-specific, pager at startup
+static NULL_PAGER: NullPager = NullPager{};
+pub static PAGER: AtomicRefCell<&dyn Pager> = AtomicRefCell::new( &NULL_PAGER );
+
+#[cfg(not(test))]
+pub fn get_pager() -> &'static dyn Pager {
+    *PAGER.borrow()
+}
+
+#[cfg(test)]
+pub static MOCK_PAGER_INSTANCE: LazyLock<MockPager> = LazyLock::new(|| { MockPager::new() } );
+
+// This could be a problem for tests... they run in parallel, and this is a singleton...
+// I could inject it to each consumer, but that's wasteful; an extra pointer which is 
+// technically superfluous.  Not a big deal for big components, but for all the page-based 
+// primitives, it takes up precious space in the page.
+#[cfg(test)]
+pub fn get_pager() -> &'static dyn Pager {
+    &*MOCK_PAGER_INSTANCE
+}

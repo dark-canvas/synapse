@@ -8,10 +8,10 @@
 // TODO: move this into the scheduler module?
 
 use crate::errors::ErrCode;
-use crate::pager::{PhysicalAddress, VirtualAddress};
+use crate::pager::VirtualAddress;
 use crate::pager::Pager;
-use crate::pager::on_demand_array::OnDemandArray;
-use crate::pager::on_demand_stack::OnDemandStack;
+use crate::pager::OnDemandArray;
+use crate::pager::OnDemandStack;
 use crate::arch::x86_64::scheduler::task::{Task, create_task_id, get_task_generation_from_id};
 
 pub const TASK_MAP_BASE_ADDRESS: VirtualAddress = VirtualAddress(0xFFFFFFF010000000);
