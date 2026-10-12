@@ -1,10 +1,15 @@
 mod smp;
-pub mod acpi_handler;
-pub mod trampoline;
-pub mod relocation;
-pub mod cpu_state;
-pub mod cpu_stack;
-pub mod per_cpu_data;
+mod acpi_handler;
+mod trampoline;
+mod relocation;
+mod cpu_state;
+mod cpu_stack;
+pub(crate) mod per_cpu_data;
 
-pub use self::smp::init;
-pub use self::smp::SMP_INITIALIZED;
+pub use smp::init;
+pub use smp::SMP_INITIALIZED;
+pub use cpu_state::CpuState;
+pub use cpu_state::State;
+pub use cpu_state::get_cpu_id;
+pub use cpu_state::get_current_task_id;
+pub use cpu_stack::CpuStack;

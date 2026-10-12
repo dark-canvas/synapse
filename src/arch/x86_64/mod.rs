@@ -6,7 +6,6 @@ pub mod pager;
 mod pit;
 mod scheduler;
 pub mod smp;
-mod task_map;
 #[macro_use]
 mod util;
 mod x2apic;
@@ -17,11 +16,11 @@ use crate::pager::PAGER;
 use satus_struct::config::Config;
 use self::pager::Pager;
 use self::scheduler::Scheduler;
-use self::smp::cpu_state::{CpuState, State};
+use self::smp::{CpuState, State};
 use x86_64::instructions::interrupts;
 use spin::Once;
 use crate::types::CpuId;
-use crate::arch::x86_64::task_map::TaskMap;
+use self::scheduler::TaskMap;
 use global_data::GlobalData;
 use crate::sync::cpu_mutex::CpuMutex;
 

@@ -2,7 +2,7 @@ use crate::pager::Pager;
 use crate::pager::VirtualAddress;
 
 use crate::sync::cpu_mutex::CpuMutex;
-use super::task_map::TaskMap;
+use super::scheduler::TaskMap;
 use super::X86_PAGER;
 
 const KERNEL_GLOBAL_DATA_BASE: VirtualAddress = VirtualAddress(0xFFFFFF9000000000);

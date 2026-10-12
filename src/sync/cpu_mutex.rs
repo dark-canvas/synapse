@@ -3,7 +3,7 @@ use core::cell::UnsafeCell;
 use core::ops::{Drop, Deref, DerefMut};
 use crate::errors::ErrCode;
 // TODO: this non-arch code should not be importing arch-specific code!!!
-use crate::arch::x86_64::smp::cpu_state; // need a better way to do this across arch!  Think of a design!
+use crate::arch::x86_64::smp::get_cpu_id; // need a better way to do this across arch!  Think of a design!
 use crate::arch::x86_64::smp::SMP_INITIALIZED;
 #[allow(dead_code)]
 const UNLOCKED : u32 = 0;
@@ -76,7 +76,7 @@ impl<T> CpuMutex<T> {
             return 1;
         }
 
-        cpu_state::get_cpu_id().unwrap() as u32 + 1 // CpuId == 0 is valid, but == UNLOCKED, so we can't use it
+        get_cpu_id().unwrap() as u32 + 1 // CpuId == 0 is valid, but == UNLOCKED, so we can't use it
     }
 
     // TODO: add other locking methods:
