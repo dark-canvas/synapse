@@ -30,57 +30,95 @@ global_asm!(
     ".text",
     "yield_task_asm:",
 
-    // TODO: don't do anything (just return) if there aren't any active tasks to switch to
+    // Before saving off the context of the current task, we should check whether there's even another 
+    // task that's waiting to be resumed.  To do that, we need to call into rust code, which is done via an 
+    // extern "C" function, which requires the caller to save registers to ensure they aren't clobbered
+    // (%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %rflags need to be saved).
+    // Typically you would save them to the stack, but it makes more sense to just save them into the 
+    // Task structure (if there is a waiting task, they need to be there anyway).
 
     "    push %rdi",
+    "    pushfq",
+
     // calculate the current task pointer by querying the current taskID from the cpu state, 
     // multiply by the size of a Task, and add the task map base address to it.
     "    xorq %rdi, %rdi",
-    "    movl %gs:8, %edi",  // OR load the whole thing and and with 0xFFFFFFFF to get the loewr part (task index + 1)
-    "    subl $1, %edi",  // subtract 1 to get the task index
+    "    movl %gs:8, %edi",
+    "    push %rdi",                 // save off the current task ID for comparison later
+    "    subl $1, %edi",             // subtract 1 to get the task index
     "    imulq $24760, %rdi, %rdi",  // immediate value is size_of::<Task>()
     "    push %rax",
     "    movq $0xFFFFFFF010000000, %rax",
-    "    addq %rax, %rdi", // add the base of the task map
+    "    addq %rax, %rdi",           // add the base of the task map
     "    pop %rax",
 
-    // Task::registers (RegisterSnapshot) is the first field of Task, so we can just write to the start of the struct
-    "    movq %rax, 0(%rdi)",   // RAX
-    "    movq %rbx, 8(%rdi)",   // RBX
-    "    movq %rcx, 16(%rdi)",  // RCX
-    "    movq %rdx, 24(%rdi)",  // RDX
-    "    movq %rsi, 32(%rdi)",  // RSI
-    // RDI contains the current task pointer, but the original value was pushed (above) and 
-    // is handled later (below) -> 40(%rdi)
-    "    movq %rbp, 48(%rdi)", // RBP 
+    // save all the x86-64 ABI clobbered/scratch registers first (note rdi and rflags are pushed on the stack)
+    "    movq %rax,  0(%rdi)",
+    "    movq %rcx, 16(%rdi)",
+    "    movq %rdx, 24(%rdi)",
+    "    movq %rsi, 32(%rdi)",
+    "    movq %r8,  64(%rdi)",
+    "    movq %r9,  72(%rdi)",
+    "    movq %r10, 80(%rdi)",
+    "    movq %r11, 88(%rdi)",
+    // original (task's) rdi is already on the stack, but we also need to save the current rdi, as it 
+    // points to the current Task structure which (depending on the output of scheduler_get_next_task) 
+    // we either need to keep saving state to, or restore the scratch registers from...
+    "    push %rdi",
 
-    // save rsp into the current task, but remember to add 8 to skip over the push of 
-    // rdi we did above.  By doing this, we save the stack position such that a pop will
-    // return to the return address of this yield_task call)
-    "    leaq 8(%rsp), %rax", // RSP 
-    "    movq %rax, 56(%rdi)", // RSP 
+    // check if there's another task waiting to run.  If there is, the current task ID will be set.
+    // If it's the same as it was before, then restore the previous registers and return to the 
+    // same task, otherwise keep saving the context of the current task in preparation to switch 
+    // to the next one
+    "    call scheduler_get_next_task", // call into rust to get the next task to run
+    "    movl %gs:8, %edi",             // current task id, possibly changed by the previous call
+    "    cmpl %edi, 8(%rsp)",
+    "    pop %rdi",                     // restore the previous Task struct
+    "    jne 1f",
 
-    "    movq %r8,  64(%rdi)",   // R8
-    "    movq %r9,  72(%rdi)",   // R9
-    "    movq %r10, 80(%rdi)",  // R10
-    "    movq %r11, 88(%rdi)",  // R11
-    "    movq %r12, 96(%rdi)",  // R12
-    "    movq %r13, 104(%rdi)",  // R13
-    "    movq %r14, 112(%rdi)",  // R14
-    "    movq %r15, 120(%rdi)",  // R15
-    // After Task::registers comes rip and rflags
-    
-    "    movq 8(%rsp), %rax", // RIP is on the stack at the return address, which is at RBP (after the push above)
-    "    movq %rax, 128(%rdi)", // RIP (need to get return address from stack)
-    
-    "    pushfq",
+    // no task switch!!! Restore the registers we just saved, and return back to the task...
+    "    addq $8, %rsp", // we don't need the previous task ID
+    "    popf",
+    "    movq  0(%rdi), %rax",
+    "    movq 16(%rdi), %rcx",
+    "    movq 24(%rdi), %rdx",
+    "    movq 32(%rdi), %rsi",
+    "    movq 64(%rdi), %r8",
+    "    movq 72(%rdi), %r9",
+    "    movq 80(%rdi), %r10",
+    "    movq 88(%rdi), %r11",
+    "    popq %rdi",
+    "    ret",
+
+    // if we reached this label, then there *is* a task to switch to, so keep saving the current task's state
+    // note that the previous task ID is still at rsp; we don't need it anymore, so skip past it
+    "1:",
+    "    addq $8, %rsp",
+
+    // we pushed the flags onto the stack above, so save it now...
     "    popq %rax",
     "    movq %rax, 136(%rdi)", // RFLAGS
+
+    // save rsp into the prevoius task struct, but remember to add 8 to skip over the push of 
+    // rdi we did to start this assembly.  By doing this, we save the stack position such that a pop will
+    // return to the return address of this yield_task call)
+    "    leaq 8(%rsp), %rax",  // RSP 
+    "    movq %rax, 56(%rdi)", // RSP 
+
+    "    movq %rbx, 8(%rdi)",
+    "    movq %rbp, 48(%rdi)",
+
+    "    movq %r12, 96(%rdi)",
+    "    movq %r13, 104(%rdi)",
+    "    movq %r14, 112(%rdi)",
+    "    movq %r15, 120(%rdi)",
+    
+    "    movq 8(%rsp), %rax",   // RIP is on the stack at the return address, which is at RBP (after the push above)
+    "    movq %rax, 128(%rdi)", // RIP (need to get return address from stack)
+    
     // handle rdi
     "    pop %rax",
     "    movq %rax, 40(%rdi)", // RDI
-
-    "    call scheduler_get_next_task", // call into rust to get the next task to run
 
     // This code (resolving a task_id to a Task*) is exactly the same as above.
     // Might be good to have a function (or maybe it can be emitted by a macro)
@@ -91,21 +129,21 @@ global_asm!(
     "    movq $0xFFFFFFF010000000, %rax",
     "    addq %rax, %rdi", // add the base of the task map
  
-    "    movq 0(%rdi), %rax",   // RAX
-    "    movq 8(%rdi), %rbx",   // RBX
-    "    movq 16(%rdi), %rcx",  // RCX
-    "    movq 24(%rdi), %rdx",  // RDX
-    "    movq 32(%rdi), %rsi",  // RSI
-    "    movq 48(%rdi), %rbp", // RBP 
-    "    movq 56(%rdi), %rsp", // RSP
-    "    movq 64(%rdi), %r8",   // R8
-    "    movq 72(%rdi), %r9",   // R9
-    "    movq 80(%rdi), %r10",  // R10
-    "    movq 88(%rdi), %r11",  // R11
-    "    movq 96(%rdi), %r12",  // R12
-    "    movq 104(%rdi), %r13",  // R13
-    "    movq 112(%rdi), %r14",  // R14
-    "    movq 120(%rdi), %r15",  // R15
+    "    movq 0(%rdi), %rax",
+    "    movq 8(%rdi), %rbx",
+    "    movq 16(%rdi), %rcx",
+    "    movq 24(%rdi), %rdx",
+    "    movq 32(%rdi), %rsi",
+    "    movq 48(%rdi), %rbp",
+    "    movq 56(%rdi), %rsp",
+    "    movq 64(%rdi), %r8",
+    "    movq 72(%rdi), %r9",
+    "    movq 80(%rdi), %r10",
+    "    movq 88(%rdi), %r11",
+    "    movq 96(%rdi), %r12",
+    "    movq 104(%rdi), %r13",
+    "    movq 112(%rdi), %r14",
+    "    movq 120(%rdi), %r15",
    
     "    movq 136(%rdi), %rax", // RFLAGS
     "    push %rax", 

@@ -88,5 +88,10 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
                 }
             }).unwrap();
         pager::run_time_tests(X86_PAGER.get().unwrap());
+    } else {
+        loop {
+            println!("Hello from CPU {}", cpu_id);
+            core::hint::spin_loop();
+        }
     }
 }
