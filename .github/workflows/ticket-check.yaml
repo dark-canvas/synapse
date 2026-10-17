@@ -1,0 +1,37 @@
+name: PR ticket check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  pr-ticket-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Measure diff size
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git diff --numstat "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" > diff_numstat.txt
+          total=$(awk 'NF >= 2 { total += $1 + $2 } END { print total + 0 }' diff_numstat.txt)
+          echo "total=${total}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate issue references for large PRs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TOTAL_LINES: ${{ steps.diff.outputs.total }}
+        run: python3 .github/scripts/check_pr_ticket.py
