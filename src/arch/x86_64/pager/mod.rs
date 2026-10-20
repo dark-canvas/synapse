@@ -987,7 +987,7 @@ pub fn run_time_tests(pager: &Pager) {
         }
         last_page = page;
 
-        yield_task();
+        //yield_task();
     }
 
     println!("Allocated all pages; now freeing starting at {}", first_page.unwrap_or(0));

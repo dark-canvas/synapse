@@ -1,17 +1,17 @@
-use crate::Address;
-use crate::arch::x86_64::scheduler::Scheduler;
-use crate::page_based;
-use crate::types::CpuId;
-use crate::errors::ErrCode;
-use super::per_cpu_data;
+
 use num_traits::AsPrimitive;
 use satus_struct::config::Config;
 use core::default::Default;
 use core::arch::asm;
 use num_traits::PrimInt;
-use crate::scheduler::TaskId;
-
-// TODO: implemenent and use something like ConfigPage in satus?
+use x2apic::lapic::LocalApic;
+use crate::Address;
+use crate::arch::x86_64::scheduler::Scheduler;
+use crate::arch::x86_64::scheduler::TaskHandle;
+use crate::page_based;
+use crate::types::CpuId;
+use crate::errors::ErrCode;
+use super::per_cpu_data;
 
 #[allow(dead_code)]
 #[derive(Default, PartialEq, Clone, Copy)]
@@ -22,38 +22,32 @@ pub enum State {
 }
 
 #[repr(C)]
-#[derive(Default)]
 pub struct CpuState {
-    /* Offset */
-    /*  0 */ pub apic_id: u8, // TODO: CpuId (but stored as a u8)
-    /*  1 */ pub state: State,
+    pub apic_id: u8, // TODO: CpuId (but stored as a u8)
+    pub state: State,
     // u8 here
     // u8 here
     // u32 here
-    /*  8 */ pub current_tid: TaskId, // u64
-    /* 16 */ pub config: Address, // Address of config from bootloader (struct needs to be default initializeable)
-    /*    */ pub scheduler: Scheduler,
+    pub current_tid: TaskHandle, // u64
+    pub config: Address, // Address of config from bootloader (struct needs to be default initializeable)
+    pub scheduler: Scheduler,
+    pub lapic: LocalApic,
+    pub lapic_timer_ticks_per_ms: u32,
 }
 
 impl CpuState {
-    // or set config after?
-    pub fn new(id: CpuId) -> &'static mut CpuState {
-        page_based::new_at::<CpuState>( per_cpu_data::get_cpu_state_base(id) )
-    }
-
     pub fn get(id: CpuId) -> &'static mut CpuState {
         let base_address = per_cpu_data::get_cpu_state_base(id);
         unsafe { &mut *(base_address.0 as *mut CpuState) }
     }
 
-    // TODO: pick a standard form for inline assembly (AT&T... look into the nostack, pure, readonly variables as well)
     pub fn get_local_cpu_state() -> &'static mut CpuState {
         let base_address: usize;
         unsafe {
             asm!(
                 "rdgsbase {}",
                 out(reg) base_address,
-                options(nostack/*, pure, readonly*/)
+                options(nostack, att_syntax)
             );
         }
         unsafe { &mut *(base_address as *mut CpuState) }
@@ -91,9 +85,11 @@ where
 // Or just assert, since it just shouldn't be called in that case, and can be avoided
 #[allow(dead_code)]
 pub fn get_cpu_id() -> Result<CpuId, ErrCode> {
-    Ok( unsafe { get_cpu_state_at_offset::<u8>(0) } as CpuId )
+    Ok( unsafe { get_cpu_state_at_offset::<u8>( core::mem::offset_of!(CpuState, apic_id) ) } as CpuId )
 }
 
+/* 
 pub fn get_current_task_id() -> TaskId {
-    ( unsafe { get_cpu_state_at_offset::<u64>(8) }) as TaskId
+    ( unsafe { get_cpu_state_at_offset::<u64>( core::mem::offset_of!(CpuState, current_tid) ) }) as TaskId
 }
+*/

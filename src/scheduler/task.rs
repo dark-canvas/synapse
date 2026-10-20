@@ -1,5 +1,7 @@
-pub type TaskId = u64;
+use super::TaskHandle;
 
 pub trait Task {
-    fn get_id(&self) -> TaskId;
+    type TaskHandle : TaskHandle;
+
+    fn get_handle(&self) -> Self::TaskHandle;
 }
