@@ -4,7 +4,7 @@ KERNEL_DEBUG_LINK := $(KERNEL_DEPS_DIR)/kernel-debug
 .PHONY: all test doc boot debug clean kernel-debug
 
 all:
-	RUSTFLAGS="-C link-arg=-Tmemory_layout.ld" cargo build -Z build-std-features=compiler-builtins-mem -Z build-std=core,compiler_builtins
+	CARGO_TARGET_DIR=target/kernel RUSTFLAGS="-C link-arg=-Tmemory_layout.ld" cargo build -Z build-std-features=compiler-builtins-mem -Z build-std=core,compiler_builtins
 
 kernel-debug:
 	@mkdir -p $(KERNEL_DEPS_DIR)
@@ -16,20 +16,21 @@ kernel-debug:
 	fi
 
 test: 
-	cargo test --target x86_64-unknown-linux-gnu
+	CARGO_TARGET_DIR=target/native cargo test --target x86_64-unknown-linux-gnu
 	@$(MAKE) --no-print-directory kernel-debug
 
 doc:
 	cargo test --target x86_64-unknown-linux-gnu
 
 boot:
-	cp target/target.x86_64/debug/kernel ../satus/esp/efi/boot/kernel.elf
+	cp target/kernel/target.x86_64/debug/kernel ../satus/esp/efi/boot/kernel.elf
 	bash -c "../satus/run.sh"
 
 debug:
-	cp target/target.x86_64/debug/kernel ../satus/esp/efi/boot/kernel.elf
+	cp target/kernel/target.x86_64/debug/kernel ../satus/esp/efi/boot/kernel.elf
 	bash -c "../satus/debug.sh"
 
 clean:
-	cargo clean --target x86_64-unknown-linux-gnu
-	cargo clean 
+	CARGO_TARGET_DIR=target/native cargo clean --target x86_64-unknown-linux-gnu
+	CARGO_TARGET_DIR=target/kernel cargo clean
+	cargo clean
