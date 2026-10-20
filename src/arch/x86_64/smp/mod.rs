@@ -11,5 +11,4 @@ pub use smp::SMP_INITIALIZED;
 pub use cpu_state::CpuState;
 pub use cpu_state::State;
 pub use cpu_state::get_cpu_id;
-pub use cpu_state::get_current_task_id;
 pub use cpu_stack::CpuStack;

@@ -65,6 +65,17 @@ where
             None => return Err(ErrCode::OutOfBounds),
         }
     }
+
+    pub fn peek(&self) -> Result<T, ErrCode> {
+        match self.head {
+            Some(head_node) => {
+                unsafe {
+                    return Ok((*head_node).item);
+                }
+            }
+            None => return Err(ErrCode::OutOfBounds),
+        }
+    }
 }
 
 #[cfg(test)]

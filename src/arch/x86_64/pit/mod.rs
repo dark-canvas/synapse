@@ -10,9 +10,17 @@ At the kernel level, you program the PIT (Programmable Interval Timer) or APIC t
         Enable Interrupts: Use x86_64::instructions::interrupts::enable(). 
 */
 
+use core::arch::global_asm;
 use core::time::Duration;
 use x86_64::structures::idt::InterruptStackFrame;
 use x86_64::registers::model_specific::Msr;
+use crate::arch::x86_64::global_data::GlobalData;
+use crate::arch::x86_64::scheduler::{TASK_MAP_BASE_ADDRESS, Task};
+use crate::arch::x86_64::x2apic::timer::timer_set;
+use crate::arch::x86_64::scheduler::scheduler_get_next_task;
+
+use crate::arch::x86_64::smp::CpuState;
+use crate::scheduler::TaskMap as _;
 
 // Port delcarations
 #[allow(dead_code)]
@@ -23,6 +31,8 @@ const TIMER1_CNTR: u16 = 0x41;
 const TIMER2_CNTR: u16 = 0x42;
 #[allow(dead_code)]
 const TIMER_CTRL: u16 = 0x43;
+
+const TIMER2_GATE: u16 = 0x61;
 
 // for use with TIMER_CTRL port
 #[allow(dead_code)]
@@ -58,66 +68,151 @@ const TIMER_BIN16: u8 = 0;
 #[allow(dead_code)]
 const TIMER_BCD: u8 = 1;
 
-const PIT_FREQ: u32 = 0x1234DD;
+const PIT_FREQ: u32 = 0x1234DE;
 
 const MICROS_PER_SECOND: u64 = 1_000_000;
 
 static mut TICKS: u64 = 0;
 static mut FREQ: u64 = 0;
 
-// It's debateable whether this belongs here, or in the IDT module...  ultimately it'll defer to common multitasking code...
-pub extern "x86-interrupt" fn timer_interrupt_handler(
-    _stack_frame: InterruptStackFrame)
+unsafe extern "C" {
+    /// Voluntarily called by a task to yield control to the scheduler, which will select the next task to run.
+    pub fn timer_interrupt_asm();
+}
+
+// Inline assembly function directly into the binary
+// It's important to note the convention that's used when calling this method:
+//   The call instruction: It decrements the Stack Pointer (RSP) by 8 bytes, 
+//   copies the address of the next sequential instruction (the return address) into that new memory location, 
+//   and then jumps to the target function.
+global_asm!(
+    ".global timer_interrupt_asm",
+    ".text",
+    "timer_interrupt_asm:",
+    "iretd"
+);
+
+
+#[unsafe(naked)]
+pub extern "x86-interrupt" fn timer_interrupt_handler(stack_frame: InterruptStackFrame)
 {
-    // increment ticks by 1
-    unsafe { TICKS += 1; }
-    // Safe off the current task's state so that we can resume it later
-    /*
-    unsafe {
-        (*CURRENT_TASK).registers = get_register_snapshot!();
-        (*CURRENT_TASK).registers.rip = stack_frame.instruction_pointer.as_u64();
-        (*CURRENT_TASK).registers.rflags = stack_frame.cpu_flags.bits();
-    }
-    */
+    /* Stack is:
+     * rsp + 32: return stack selector (padded to 8 bytes),
+     * rsp + 24: return rsp
+     * rsp + 16: return rflags
+     * rsp +  8: return code segment
+     * rsp +  0: return instruction pointer
+     */
+    core::arch::naked_asm!(
+        "    push %rdi",
 
-    // Prior to executing this interrupt haandler, the processor would have pushed the following onto the stack:
-    // 1. The current instruction pointer (RIP) and code segment (CS)
-    // 2. The RFLAGS register
-    // 3. The current stack pointer (RSP) and stack segment (SS)
-    // TODO: Determine order?  I think it's reversed from above (https://alamot.github.io/os_tasking/)
-    // Before we do anything, save off the location of these so that we can:
-    //   store them in our task structure
-    //   replace them with the next task to run
-    
-    /*
-    For multitasking...
-    1. Save the current task's state (registers, stack pointer, etc.) to its Task Control Block (TCB).
-    2. Select the next task to run using a scheduling algorithm (e.g., round-robin, priority-based).
-    3. Load the next task's state from its TCB, including its stack pointer and registers.
-    4. Send an End of Interrupt (EOI) signal to the PIC or APIC to indicate that the interrupt has been handled.
-    */
-    
-    // TODO: need a better/common way to signal EOI (for all interrupts) and in the x2apic mod
-    unsafe { 
-    let mut apic_eoi_msr = Msr::new(0x80b);
-        apic_eoi_msr.write(0x0)
-    };
+        // calculate the current task pointer by querying the current taskID from the cpu state, 
+        // multiply by the size of a Task, and add the task map base address to it.
+        "    xorq %rdi, %rdi",
+        "    movl %gs:{CURRENT_TASK_OFFSET}, %edi",  // TODO: pass in offset_of as a const
+        "    subl $1, %edi",             // subtract 1 to get the task index
+        "    imulq ${TASK_SIZE}, %rdi, %rdi",  // immediate value is size_of::<Task>()
+        "    push %rax",
+        "    movq ${TASK_MAP_BASE}, %rax",
+        "    addq %rax, %rdi",           // add the base of the task map
+        "    pop %rax",
 
-    // TODO: this doesn't work...
-    /*
+        // save all the x86-64 ABI clobbered/scratch registers first,
+        // note rdi and rflags pushed on the stack
+        "    movq %rax,  0(%rdi)",
+        "    movq %rbx, 8(%rdi)",
+        "    movq %rcx, 16(%rdi)",
+        "    movq %rdx, 24(%rdi)",
+        "    movq %rsi, 32(%rdi)",
+        "    movq %rbp, 48(%rdi)",
+        "    movq %r8,  64(%rdi)",
+        "    movq %r9,  72(%rdi)",
+        "    movq %r10, 80(%rdi)",
+        "    movq %r11, 88(%rdi)",
+        "    movq %r12, 96(%rdi)",
+        "    movq %r13, 104(%rdi)",
+        "    movq %r14, 112(%rdi)",
+        "    movq %r15, 120(%rdi)",
+
+        // handle rdi
+        "    pop %rax",
+        "    movq %rax, 40(%rdi)", // RDI
+
+        // pop off the return stack and save it off
+        "    pop %rax",  // rip
+        "    movq %rax, 128(%rdi)",
+        "    pop %rax",  // cs
+        "    movw %ax, {CS_OFFSET}(%rdi)",
+        "    pop %rax",  // rflags
+        "    movq %rax, 136(%rdi)",
+        "    pop %rax",  // rsp
+        "    movq %rax, 56(%rdi)",
+        "    pop %rax",  // ss
+        "    movw %ax, {SS_OFFSET}(%rdi)",
+        
+        "    callq timer_rust",
+
+        // restore state from pending task (which rust code indicated)
+
+        "    xorq %rdi, %rdi",
+        "    movl %gs:{CURRENT_TASK_OFFSET}, %edi",  // TODO: pass in offset_of as a const
+        "    subl $1, %edi",             // subtract 1 to get the task index
+        "    imulq ${TASK_SIZE}, %rdi, %rdi",  // immediate value is size_of::<Task>()
+        "    movq ${TASK_MAP_BASE}, %rax",
+        "    addq %rax, %rdi",           // add the base of the task map
+
+        "    xorq %rax, %rax",
+        "    movw {SS_OFFSET}(%rdi), %ax",
+        "    push %rax",
+        "    movq 56(%rdi), %rax",
+        "    push %rax",
+        "    movq 136(%rdi), %rax",
+        "    push %rax",
+        "    xorq %rax, %rax",
+        "    movw {CS_OFFSET}(%rdi), %ax",
+        "    push %rax",
+        "    movq 128(%rdi), %rax",
+        "    push %rax",
+
+        "    movq  0(%rdi), %rax",
+        "    movq  8(%rdi), %rbx",
+        "    movq 16(%rdi), %rcx",
+        "    movq 24(%rdi), %rdx",
+        "    movq 32(%rdi), %rsi",
+        "    movq 48(%rdi), %rbp",
+        "    movq 64(%rdi), %r8",
+        "    movq 72(%rdi), %r9",
+        "    movq 80(%rdi), %r10",
+        "    movq 88(%rdi), %r11",       
+        "    movq 96(%rdi), %r12",
+        "    movq 104(%rdi), %r13",
+        "    movq 112(%rdi), %r14",
+        "    movq 120(%rdi), %r15",
+        "    movq  40(%rdi), %rdi",
+
+        "    iretq",
+        TASK_SIZE = const core::mem::size_of::<Task>(),
+        TASK_MAP_BASE = const TASK_MAP_BASE_ADDRESS.0,
+        CURRENT_TASK_OFFSET = const core::mem::offset_of!(CpuState, current_tid),
+        CS_OFFSET = const core::mem::offset_of!(Task, cs),
+        SS_OFFSET = const core::mem::offset_of!(Task, ss),
+        options(att_syntax)
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn timer_rust() {
+
+    // call common scheduler code (TODO: find a way to make this common, and into move out of 
+    // the arch folder)
+    scheduler_get_next_task();
+
     unsafe {
-        // restore registers and return to the "next" task (it's still the same one for now)
-        let mut next_stack_frame = InterruptStackFrame::new(
-            VirtAddr::new((*CURRENT_TASK).registers.rip),
-            stack_frame.code_segment,
-            RFlags::from_bits_truncate((*CURRENT_TASK).registers.rflags),
-            VirtAddr::new((*CURRENT_TASK).registers.rsp),
-            stack_frame.stack_segment,
-        );
-        restore_register_snapshot!(&(*CURRENT_TASK).registers);
-        next_stack_frame.iretq();
+        CpuState::get_local_cpu_state().lapic.end_of_interrupt();
     }
-    */
+
+    // re-enable the timer...
+    timer_set(Duration::from_millis(10));
 }
 
 fn timer_set_frequency(freq: u32) {
@@ -135,20 +230,44 @@ pub fn timer_get_ticks() -> u64 {
 }
 
 pub fn timer_delay(duration: Duration) {
-    let start_ticks = timer_get_ticks();
+    // The tick countdown is a u16, and the frequency is ~
+    // Which means the maximum timer we can configure (without looping) is 54,925.4 µs
+    assert!(duration.as_micros() < 54925);
 
-    let freq = unsafe { 
-        FREQ as u64
-    };
+    let mut pit_ticks: u16 = (PIT_FREQ as u64 * duration.as_micros() as u64 / 1_000_000) as u16;
+    if pit_ticks == 0 {
+        pit_ticks = 1;
+    }
 
-    let ticks_duration = duration.as_micros() * freq as u128/ MICROS_PER_SECOND as u128;
-    // could potentially do micros
-    let end_ticks = start_ticks + ticks_duration as u64;
-    println!("Ticks at {} waiting for {}", start_ticks, end_ticks);
-    while timer_get_ticks() < end_ticks {
-        // busy wait
-        // TODO: context switch
-        core::hint::spin_loop();
+    unsafe {      
+        // Configure PIT Channel 2: 
+        //    Mode 0 (Interrupt on Terminal Count) 
+        //    Access mode: lobyte/hibyte.
+        //    BCD mode: binary
+        x86_64::instructions::port::Port::new(TIMER_CTRL).write(
+            TIMER2 | TIMER_WHOLE | TIMER_MODE0);
+
+        let mut timer2_counter = x86_64::instructions::port::Port::new(TIMER2_CNTR);
+        let mut timer2_gate = x86_64::instructions::port::Port::new(TIMER2_GATE);
+
+        // write the count down ticks, lo byte then high byte
+        timer2_counter.write((pit_ticks & 0xff) as u8);
+        timer2_counter.write(((pit_ticks >> 8) & 0xFF) as u8);
+
+
+        // Reset PIT Channel 2 gate, clearing the lower two bits
+        //   Bit 0 = gate    => stop countdown
+        //   Bit 1 = speaker => disable the speaker
+        let mut pit_gate: u8 = timer2_gate.read(); //inb(0x61);
+        pit_gate &= 0xFC;
+        timer2_gate.write(pit_gate);
+        timer2_gate.write(pit_gate | 0x01); // enable the countdown, keep speaker disabled
+
+        // Wait for PIT Channel 2 to finish counting down.
+        //    When Mode 0 finishes, the OUT pin (Bit 5 of port 0x61) goes HIGH.
+        while (timer2_gate.read() & 0x20) == 0 {
+            core::hint::spin_loop();
+        }
     }
 }
 
