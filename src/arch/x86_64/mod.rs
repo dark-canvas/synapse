@@ -64,6 +64,7 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
     // CURRENT_TASK glboal as well, which will mess up our yield_task() testing
     interrupts::enable();
 
+
     if is_bsp {
         // the per-cpu-state is created here (for all CPUs), it needs to have a unique scheduler
         // SMP requires pager to be initialized first

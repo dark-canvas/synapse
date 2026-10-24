@@ -67,7 +67,7 @@ pub trait Pager: Sync {
     fn get_physical_address(&self, addr: VirtualAddress) -> Result<PhysicalAddress, ErrCode>;
 
     fn ensure_mapped(&self, virtual_addr: VirtualAddress) -> Result<bool, ErrCode> {
-        match get_pager().allocate_virtual(1, virtual_addr) {
+        match self.allocate_virtual(1, virtual_addr) {
             Ok(_) => Ok(true),
             Err(ErrCode::Pager(PagerError::VirtualAddressAlreadyMapped(_))) => Ok(false),
             Err(e) => Err(e),
@@ -81,8 +81,8 @@ pub trait Pager: Sync {
             return Ok((None, None));
         }
 
-        let page_size = get_pager().get_page_size();
-        let page_mask = get_pager().get_page_mask();
+        let page_size = self.get_page_size();
+        let page_mask = self.get_page_mask();
         let start_page = VirtualAddress(virtual_addr.0 & !page_mask);
         let page_offset = virtual_addr.0 & page_mask;
         let num_pages = (((page_offset + length as Address + page_size as Address - 1) / page_size as Address) as usize).max(1);
@@ -140,6 +140,14 @@ where
 
     fn get_physical_address(&self, addr: VirtualAddress) -> Result<PhysicalAddress, ErrCode> {
         (*self).get_physical_address(addr)
+    }
+
+    fn ensure_mapped(&self, virtual_addr: VirtualAddress) -> Result<bool, ErrCode> {
+        (*self).ensure_mapped(virtual_addr)
+    }
+
+    fn ensure_mapped_range(&self, virtual_addr: VirtualAddress, length: usize) -> Result<(Option<VirtualAddress>, Option<VirtualAddress>), ErrCode> {
+        (*self).ensure_mapped_range(virtual_addr, length)
     }
 }
 struct NullPager{}

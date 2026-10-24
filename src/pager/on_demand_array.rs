@@ -3,15 +3,18 @@ use crate::errors::ErrCode;
 use crate::pager::Pager;
 use crate::pager::VirtualAddress;
 
-pub struct OnDemandArray<'a, T> {
-    pager: &'a dyn Pager, 
+pub struct OnDemandArray<P, T> {
+    pager: P,
     base_address: VirtualAddress,
     num_items: usize,
     _phantom: PhantomData<T>,
 }
 
-impl<'a, T> OnDemandArray<'a, T> {
-    pub fn new(pager: &'a dyn Pager, base_address: VirtualAddress, num_items: usize) -> Self {
+impl<P, T> OnDemandArray<P, T>
+where
+    P: Pager,
+{
+    pub fn new(pager: P, base_address: VirtualAddress, num_items: usize) -> Self {
         Self {
             pager,
             base_address,
@@ -73,7 +76,7 @@ mod tests {
         let pager = MockPager::new();
 
         // shouldn't invoke the pager at all...
-        let array = OnDemandArray::<u64>::new(&pager, VirtualAddress(0x1000000), 10);
+        let array = OnDemandArray::<_, u64>::new(&pager, VirtualAddress(0x1000000), 10);
     }
 
     #[test]
@@ -88,7 +91,7 @@ mod tests {
             .times(1)
             .returning(|_,_| Ok((None, None)) );
 
-        let array = OnDemandArray::<HalfPage>::new(pager.get_mock(), VirtualAddress(0x1000000), 10);
+        let array = OnDemandArray::<_, HalfPage>::new(pager.get_mock(), VirtualAddress(0x1000000), 10);
         let result = array.get(0);
         assert!(result.is_ok());
         assert_eq!( result.unwrap() as *const HalfPage, 0x1000000 as *const HalfPage)
@@ -114,7 +117,7 @@ mod tests {
             .times(1)
             .returning(|_,_| Ok((None, None)) );
 
-        let array = OnDemandArray::<HalfPage>::new(pager.get_mock(), VirtualAddress(base), 10);
+        let array = OnDemandArray::<_, HalfPage>::new(pager.get_mock(), VirtualAddress(base), 10);
         let result = array.get(6);
         assert!(result.is_ok());
         assert_eq!( result.unwrap() as *const HalfPage, (base + offset) as *const HalfPage);
@@ -138,7 +141,7 @@ mod tests {
             .times(1)
             .returning(|_,_| Ok((None, None)) );
 
-        let array = OnDemandArray::<HalfPage>::new(pager.get_mock(), VirtualAddress(base), 10);
+        let array = OnDemandArray::<_, HalfPage>::new(pager.get_mock(), VirtualAddress(base), 10);
         let result = array.get(3);
         assert!(result.is_ok());
         assert_eq!( result.unwrap() as *const HalfPage, (base + offset) as *const HalfPage);
@@ -149,7 +152,7 @@ mod tests {
         let pager = MockPager::new();
 
         // shouldn't invoke the pager at all...
-        let array = OnDemandArray::<u64>::new(&pager, VirtualAddress(0x1000000), 10);
+        let array = OnDemandArray::<_, u64>::new(&pager, VirtualAddress(0x1000000), 10);
         let result = array.get(10);
         assert_eq!(result.is_ok(), false);
         assert_eq!(result, Err(ErrCode::OutOfBounds));
@@ -169,7 +172,7 @@ mod tests {
             .times(1)
             .returning(|_,_| Err(ErrCode::Unknown) );
 
-        let array = OnDemandArray::<HalfPage>::new(pager.get_mock(), VirtualAddress(base), 10);
+        let array = OnDemandArray::<_, HalfPage>::new(pager.get_mock(), VirtualAddress(base), 10);
         let result = array.get(3);
         assert_eq!(result.is_ok(), false);
         assert_eq!(result, Err(ErrCode::Unknown));

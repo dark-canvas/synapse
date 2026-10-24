@@ -12,6 +12,7 @@ use super::super::GlobalData;
 use super::super::smp::CpuState;
 use crate::arch::x86_64::scheduler::TaskHandle;
 use crate::errors::ErrCode;
+use crate::pager::Pager;
 use crate::pager::PAGER;
 use crate::scheduler::Scheduler as SchedulerInterface;
 use crate::scheduler::Task as TaskInterface;
@@ -289,7 +290,7 @@ impl Scheduler {
     where
         F: FnOnce() + Send + 'static,
     {
-        let mut task_map = GlobalData::get().task_map.lock().unwrap();
+        let mut task_map: crate::sync::cpu_mutex::CpuMutexGuard<'_, TaskMap<&(dyn Pager + 'static)>> = GlobalData::get().task_map.lock().unwrap();
         let task: &mut Task = task_map.allocate().unwrap();
         task.initialize(f);
         self.tasks.enqueue(task.get_handle()).unwrap();
@@ -297,10 +298,10 @@ impl Scheduler {
     }
 }
 
-impl<'a> SchedulerInterface for Scheduler<'a> {
+impl SchedulerInterface for Scheduler {
     type Task = Task;
     type TaskHandle = TaskHandle;
-    type TaskMap = TaskMap<'a>;
+    type TaskMap = TaskMap<&'static dyn Pager>;
 
     // REVISTIT: this consumes task... is it okay?  Is it efficient (check the assembly)
     // TODO: I think it's not okay... the task comes form TaskMap and shouldn't ever be copied.

@@ -3,16 +3,19 @@ use crate::errors::ErrCode;
 use crate::pager::Pager;
 use crate::pager::VirtualAddress;
 
-pub struct OnDemandStack<'a, T: Copy> {
-    pager: &'a dyn Pager,
+pub struct OnDemandStack<P, T: Copy> {
+    pager: P,
     base_address: VirtualAddress,
     max_items: usize,
     num_items: usize,
     _phantom: PhantomData<T>,
 }
-    
-impl<'a, T: Copy> OnDemandStack<'a, T> {
-    pub fn new(pager: &'a dyn Pager, base_address: VirtualAddress, max_items: usize) -> Self {
+
+impl<P, T: Copy> OnDemandStack<P, T>
+where
+    P: Pager,
+{
+    pub fn new(pager: P, base_address: VirtualAddress, max_items: usize) -> Self {
         Self {
             pager,
             base_address,
@@ -65,7 +68,7 @@ mod tests {
     #[test]
     fn test_create() {
         let pager = MockPager::new();
-        let _stack = OnDemandStack::<u32>::new(&pager, VirtualAddress(0x1000000), 10);
+        let _stack = OnDemandStack::<_, u32>::new(&pager, VirtualAddress(0x1000000), 10);
     }
 
     #[test]
@@ -84,7 +87,7 @@ mod tests {
                 .returning(|_, _| Ok((None, None)));
         }
 
-        let mut stack = OnDemandStack::<u32>::new(pager.get_mock(), VirtualAddress(base), 3);
+        let mut stack = OnDemandStack::<_, u32>::new(pager.get_mock(), VirtualAddress(base), 3);
         assert_eq!(stack.push(10), Ok(()));
         assert_eq!(stack.push(20), Ok(()));
         assert_eq!(stack.push(30), Ok(()));
@@ -106,7 +109,7 @@ mod tests {
             .times(1)
             .returning(|_, _| Ok((None, None)));
 
-        let mut stack = OnDemandStack::<u32>::new(pager.get_mock(), VirtualAddress(base), 1);
+        let mut stack = OnDemandStack::<_, u32>::new(pager.get_mock(), VirtualAddress(base), 1);
         assert_eq!(stack.push(10), Ok(()));
         assert_eq!(stack.push(20), Err(ErrCode::OutOfBounds));
         assert_eq!(*backing, [10]);
@@ -115,7 +118,7 @@ mod tests {
     #[test]
     fn test_pop_empty() {
         let pager = MockPager::new();
-        let mut stack = OnDemandStack::<u32>::new(&pager, VirtualAddress(0x1000000), 1);
+        let mut stack = OnDemandStack::<_, u32>::new(&pager, VirtualAddress(0x1000000), 1);
 
         assert_eq!(stack.pop(), Err(ErrCode::OutOfBounds));
     }
@@ -143,7 +146,7 @@ mod tests {
                 }
             });
 
-        let mut stack = OnDemandStack::<u32>::new(pager.get_mock(), VirtualAddress(base), 1);
+        let mut stack = OnDemandStack::<_, u32>::new(pager.get_mock(), VirtualAddress(base), 1);
         assert_eq!(stack.push(10), Err(ErrCode::Unknown));
         assert_eq!(*backing, [0]);
         assert_eq!(stack.push(20), Ok(()));
