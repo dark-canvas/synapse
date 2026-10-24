@@ -8,7 +8,7 @@ use super::X86_PAGER;
 const KERNEL_GLOBAL_DATA_BASE: VirtualAddress = VirtualAddress(0xFFFFFF9000000000);
 
 pub struct GlobalData<'a> {
-    pub task_map: CpuMutex< TaskMap<'a> >,
+    pub task_map: CpuMutex< TaskMap<&'a dyn Pager> >,
 }
 
 impl<'a> GlobalData<'a> {

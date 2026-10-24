@@ -30,22 +30,27 @@ const _: () = {
     assert!(TASK_MAP_MAX_TASKS <= TaskHandle::MAX, "Task map larger than TaskHandle can support!");
 };
 
-pub struct TaskMap<'a> {
-    tasks: OnDemandArray::<'a, Task>,
-    free_stack: OnDemandStack::<'a, TaskHandle>,
+pub struct TaskMap<P>
+where
+    P: Pager + Copy,
+{
+    tasks: OnDemandArray<P, Task>,
+    free_stack: OnDemandStack<P, TaskHandle>,
     next_available_index: usize,
 }
 
-impl<'a> TaskMap<'a> {
-
-    pub fn new(pager: &'a dyn Pager) -> Result<TaskMap, ErrCode> {
-        Self::new_at(pager, 
+impl<P> TaskMap<P>
+where
+    P: Pager + Copy,
+{
+    pub fn new(pager: P) -> Result<TaskMap<P>, ErrCode> {
+        Self::new_at(pager,
             TASK_MAP_BASE_ADDRESS,
-            TASK_MAP_FREE_STACK_BASE, 
+            TASK_MAP_FREE_STACK_BASE,
             TASK_MAP_MAX_TASKS)
     }
 
-    pub fn new_at(pager: &'a dyn Pager, array_base: VirtualAddress, free_stack_base: VirtualAddress, max_handles: usize) -> Result<TaskMap, ErrCode> {
+    pub fn new_at(pager: P, array_base: VirtualAddress, free_stack_base: VirtualAddress, max_handles: usize) -> Result<TaskMap<P>, ErrCode> {
         Ok(TaskMap {
             tasks: OnDemandArray::new(pager, array_base, max_handles),
             free_stack: OnDemandStack::new(pager, free_stack_base, max_handles),
@@ -83,7 +88,10 @@ impl<'a> TaskMap<'a> {
     }
 }
 
-impl<'a> TaskMapInterface for TaskMap<'a> {
+impl<P> TaskMapInterface for TaskMap<P>
+where
+    P: Pager + Copy,
+{
     type Task = Task;
     type TaskHandle = TaskHandle;
 
