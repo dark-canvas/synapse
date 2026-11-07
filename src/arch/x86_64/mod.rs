@@ -43,7 +43,6 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
 
     gdt::init(cpu_id); // setups up the TSS, so needs to be initialized before scheduler and interrupts
     idt::init_idt();   // sets up all the execption handlers, so should be done early
-    //pit::init();       // current is a dependency for smp::init, for delays -- need to replace it
 
     // pager needs to be one of the first things created as nearly anything which requires any 
     // of the following will require it:

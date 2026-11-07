@@ -106,7 +106,7 @@ global_asm!(
     "    popq %rax",
     "    movq %rax, 136(%rdi)", // RFLAGS
 
-    // save rsp into the prevoius task struct, but remember to add 8 to skip over the push of 
+    // save rsp into the previous task struct, but remember to add 8 to skip over the push of 
     // rdi we did to start this assembly.  By doing this, we save the stack position such that a pop will
     // return to the return address of this yield_task call)
     "    leaq 8(%rsp), %rax",  // RSP 
@@ -136,6 +136,10 @@ global_asm!(
     "    movq $0xFFFFFFF010000000, %rax",
     "    addq %rax, %rdi", // add the base of the task map
  
+    "    movq 136(%rdi), %rax", // RFLAGS
+    "    push %rax", 
+    "    popfq",
+
     "    movq 0(%rdi), %rax",
     "    movq 8(%rdi), %rbx",
     "    movq 16(%rdi), %rcx",
@@ -151,13 +155,8 @@ global_asm!(
     "    movq 104(%rdi), %r13",
     "    movq 112(%rdi), %r14",
     "    movq 120(%rdi), %r15",
-   
-    "    movq 136(%rdi), %rax", // RFLAGS
-    "    push %rax", 
-    "    popfq",
-    // how is rdi restored here?
-    // TODO: I also just clobbered rax!!!
-
+    "    movq  40(%rdi), %rdi",
+ 
     "    ret",
     options(att_syntax)
 );
@@ -169,93 +168,16 @@ pub fn yield_task() {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn scheduler_restore_context(stack: &mut InterruptStackFrameValue/*Volatile<&mut InterruptStackFrameValue>*/) {
-    let cpu_state = CpuState::get_local_cpu_state();
-    let global_state = GlobalData::get();
-
-    let task_map = global_state.task_map.lock().unwrap();
-    let task = task_map.get_mut(cpu_state.current_tid).unwrap();
-
-    // first, update the stack for the iretd...
-    //let mut stack = unsafe { stack_frame.as_mut() };
-    /*
-    stack.write(InterruptStackFrameValue::new(
-        VirtAddr::new(task.rip),
-        SegmentSelector(0x10), //stack_frame.code_segment,
-        RFlags::from_bits_retain(task.rflags),
-        VirtAddr::new(task.registers.rsp),
-        SegmentSelector(0x20), //stack_frame.stack_segment
-    ));
-    */
-    // keep the selectors for now, since we dont change them
-    stack.instruction_pointer = VirtAddr::new(task.rip);
-    stack.cpu_flags = RFlags::from_bits_retain(task.rflags);
-    stack.stack_pointer = VirtAddr::new(task.registers.rsp);
-    
-
-    // and then update all the registers
-    // (but the caller of this function will try to push registers!)
-    // this function must be called via assembly and ensure that no registers are saved!!!
-    unsafe {
-        core::arch::asm!(
-        "    xorq %rdi, %rdi",
-        "    movl %gs:8, %edi", // just the index (TODO: is this offset still valid?)
-        "    subl $1, %edi",
-        "    imulq ${TASK_SIZE}, %rdi, %rdi",  // immediate value is size_of::<Task>()
-        "    movq ${TASK_MAP_BASE}, %rax",
-        "    addq %rax, %rdi", // add the base of the task map
-    
-        "    movq 0(%rdi), %rax",
-        "    movq 8(%rdi), %rbx",
-        "    movq 16(%rdi), %rcx",
-        "    movq 24(%rdi), %rdx",
-        "    movq 32(%rdi), %rsi",
-        "    movq 48(%rdi), %rbp",
-        "    movq 56(%rdi), %rsp",
-        "    movq 64(%rdi), %r8",
-        "    movq 72(%rdi), %r9",
-        "    movq 80(%rdi), %r10",
-        "    movq 88(%rdi), %r11",
-        "    movq 96(%rdi), %r12",
-        "    movq 104(%rdi), %r13",
-        "    movq 112(%rdi), %r14",
-        "    movq 120(%rdi), %r15",
- 
-        "    push 136(%rdi)", // RFLAGS
-        "    popfq",
-
-        "    movq 48(%rdi), %rdi",       
-        TASK_SIZE = const core::mem::size_of::<Task>(),
-        TASK_MAP_BASE = const TASK_MAP_BASE_ADDRESS.0,
-        // how is rdi restored here?
-        options(att_syntax)
-        );
-    }
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn scheduler_get_next_task() {
     let cpu_state = CpuState::get_local_cpu_state();
     let scheduler = &mut cpu_state.scheduler;
 
-    /*
-    match scheduler.tasks.peek() {
-        Ok(task_handle) => cpu_state.pending_task = task_handle,
-        Err(_) => cpu_state.pending_task.set_null(),
-    }
-    */ 
-    if let Ok(next_task_id) = scheduler.tasks.dequeue() {
-        // Add back to the end (TODO: if still able to run)
-        scheduler.tasks.enqueue(cpu_state.current_tid).unwrap();
-        cpu_state.current_tid = next_task_id;
-        return;
-    }
+    scheduler.context_switch();
 }
 
 #[used]
 static SCHEDULER_GET_NEXT_TASK_REF: unsafe extern "C" fn() = scheduler_get_next_task;
 
-//#[derive(Default)]
 pub struct Scheduler {
     tasks: TaskList,
 }
@@ -302,6 +224,7 @@ impl SchedulerInterface for Scheduler {
     type Task = Task;
     type TaskHandle = TaskHandle;
     type TaskMap = TaskMap<&'static dyn Pager>;
+    type TaskList = TaskList;
 
     // REVISTIT: this consumes task... is it okay?  Is it efficient (check the assembly)
     // TODO: I think it's not okay... the task comes form TaskMap and shouldn't ever be copied.
@@ -313,5 +236,27 @@ impl SchedulerInterface for Scheduler {
     
     fn get_task_map(&self) -> &crate::sync::cpu_mutex::CpuMutex< Self::TaskMap > {
         &GlobalData::get().task_map
+    } 
+    
+    fn get_active_tasks(&mut self) -> &mut Self::TaskList {
+        &mut self.tasks
+    }
+    
+    fn switch_to_task(&mut self, task: Self::TaskHandle) {
+        let cpu_state = CpuState::get_local_cpu_state();
+
+        // Add back to the end (TODO: if still able to run)
+        self.tasks.enqueue(cpu_state.current_tid).unwrap();
+
+        // TODO: we've already saved off all the registers via the timer interrupt (or yield_task)
+        // but if a task switch is actually happening, then other state should be saved here
+        // - floating point state (FPU/SSE/AVX)
+        // - anything else?
+
+        // also, at this point, we should probably:
+        // - restore the new task's CR3
+        // - restore the new task's thread-local storage (gs/fs base)
+
+        cpu_state.current_tid = task;
     }
 }
