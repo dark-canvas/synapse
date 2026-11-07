@@ -10,6 +10,7 @@ use crate::pager::Pager;
 use crate::pager::VirtualAddress;
 use crate::scheduler::Task as TaskInterface;
 use crate::scheduler::TaskHandle as TaskHandleInterface;
+use crate::scheduler::TaskList as TaskListInterface;
 
 // C function (therefore can get a function pointer to it) that acts as a trampoline 
 // to call a Rust closure. The closure is passed in as a raw pointer to the closure data, 
@@ -44,6 +45,18 @@ pub struct Task {
 }
 
 pub type TaskList = Queue<&'static dyn Pager, TaskHandle>;
+
+impl TaskListInterface for TaskList {
+    type TaskHandle = TaskHandle;
+
+    fn dequeue(&mut self) -> Option<Self::TaskHandle> {
+        self.dequeue().ok()
+    }
+
+    fn enqueue(&mut self, handle: Self::TaskHandle) {
+        self.enqueue(handle);
+    }
+}
 
 #[allow(dead_code)]
 impl Task {

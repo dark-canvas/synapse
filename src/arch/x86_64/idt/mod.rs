@@ -4,7 +4,7 @@ use spin::Lazy;
 use x86_64::structures::idt::InterruptDescriptorTable;
 
 use super::gdt::ExceptionStackIndex;
-use super::pit::timer_interrupt_handler;
+use super::scheduler::timer_interrupt_handler;
 
 use self::handlers::default_handler_x86;
 use self::handlers::diverging_handler_x86;

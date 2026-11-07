@@ -1,7 +1,6 @@
 pub mod timer;
 
 use x2apic::lapic::{LocalApicBuilder, xapic_base};
-//use crate::arch::x86_64::x2apic::timer::timer_init;
 
 use super::smp::CpuState;
 use super::idt::InterruptIndex;
@@ -34,9 +33,6 @@ pub fn init() {
         cpu_state.lapic.enable();
         cpu_state.lapic.disable_timer();
     }
-
-    // don't start this yet!  The scheduler needs to be started first!!
-    //timer_init();
 
     // Note that the x2apic crate has functionality for starting up the APs as well.
     // I currently do it myself in the smp module.
