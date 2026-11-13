@@ -27,11 +27,12 @@ pub enum ExceptionStackIndex {
 
 pub const RING_0_CODE_SELECTOR : u16 = 0x08;
 pub const RING_0_DATA_SELECTOR : u16 = 0x10;
-pub const RING_3_CODE_SELECTOR : u16 = 0x18;
 pub const RING_3_DATA_SELECTOR : u16 = 0x20;
-pub const TSS_SELECTOR : u16 = 0x28;
+pub const RING_3_CODE_SELECTOR : u16 = 0x28;
+pub const TSS_SELECTOR : u16 = 0x30;
 
-pub const GDT_SIZE: usize = 56; // null + (kernel + user)(code + data) + tss descriptors = 5 * 8 + 16 
+// 6 regular descriptors, and one TSS descriptor (which is twice as big)
+pub const GDT_SIZE: usize = 6 * 8 + 16;
 
 pub unsafe fn create_tss(cpu_id: CpuId) {
     let tss_addr = per_cpu_data::get_tss_base(cpu_id);
@@ -40,6 +41,10 @@ pub unsafe fn create_tss(cpu_id: CpuId) {
     // setup up initial default values (effectively construct the TSS in place)
     tss_ptr.write(TaskStateSegment::new());
     
+    // TODO: this isn't correct !?
+    (*tss_ptr).privilege_stack_table[0] =
+        VirtAddr::new(per_cpu_data::get_stack_base(cpu_id).0);
+
     for stack in [ 
         ExceptionStackIndex::DoubleFaultStackIndex,
         ExceptionStackIndex::NmiStackIndex,
@@ -64,8 +69,9 @@ pub unsafe fn create_gdt(cpu_id: CpuId) {
         Descriptor::UserSegment(0), // null descriptor
         Descriptor::kernel_code_segment(),
         Descriptor::kernel_data_segment(),
-        Descriptor::user_code_segment(),
+        Descriptor::UserSegment(0), // (req for syscall; 32-bit compatibility mode desc; we don't use it)
         Descriptor::user_data_segment(),
+        Descriptor::user_code_segment(),
         Descriptor::tss_segment_unchecked(tss_ptr),
     ] {
         match(descriptor) {

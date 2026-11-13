@@ -44,9 +44,6 @@ pub mod address_aggregator;
 
 use spin::Mutex;
 use core::fmt::Write;
-use core::ops::Add;
-use core::ops::Sub;
-use core::ops::AddAssign;
 
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::Size4KiB;

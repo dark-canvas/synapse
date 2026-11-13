@@ -122,7 +122,11 @@ pub fn init(config: &Config) {
         PhysicalAddress(cpu_config.trampoline_address),
         VirtualAddress(cpu_config.trampoline_address),
         PageType::Page4KB,
-        PageTableFlags::WRITABLE,
+        // The trampoline doesn't need to be user-accessible
+        // This is only done to facilitate the syscall test for now (because 
+        // the full path to 0x400000 needs to be user accessible)
+        // Alternatively, the trampoline can be unmapped after used (probably should be)
+        PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE,
     );
 
     // Record apic_id per CPU
