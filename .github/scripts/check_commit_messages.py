@@ -14,6 +14,7 @@ ALLOWED_MODULES = {
     "scheduler",
     "smp",
     "sync",
+    "syscall",
     "timers",
     "util"
 }
