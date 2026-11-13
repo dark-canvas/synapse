@@ -6,11 +6,16 @@ pub mod pager;
 mod pit;
 mod scheduler;
 pub mod smp;
+mod syscall;
 #[macro_use]
 mod util;
 mod x2apic;
 
+use core::arch::asm;
+
 use crate::arch::x86_64::scheduler::yield_task;
+use crate::arch::x86_64::syscall::syscall_test_task;
+use crate::arch::x86_64::syscall::perform_sysctl_test;
 use crate::arch::x86_64::x2apic::timer::timer_init;
 use crate::pager::PAGER;
 
@@ -58,9 +63,7 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
         GlobalData::init();
         GlobalData::get().task_map = CpuMutex::new( TaskMap::new(*PAGER.borrow_mut()).unwrap() );
     }
- 
-    // TODO: don't do this yet, as the timer interrupt will modify the contents of the 
-    // CURRENT_TASK glboal as well, which will mess up our yield_task() testing
+
     interrupts::enable();
 
 
@@ -71,7 +74,7 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
         // the x2apic needs cpu-state created first in order to save off the lapic struct
         smp::init(&config); // TODO: pass in scheduler and taskmap? (need to set in per-state data)
     }
-
+    syscall::init(); // depends on cpu id (for now; debug)
     x2apic::init();
 
 
@@ -90,6 +93,12 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
 
     if is_bsp {
         // as a test, create another task and yield to it, then yield back to the kernel task
+        cpu_state.scheduler.new_task(||
+            {
+                println!("Trying sysctl test task...");
+                perform_sysctl_test();
+            }).unwrap();
+        /* 
         cpu_state.scheduler.new_task(|| 
             {
                 loop {
@@ -97,8 +106,17 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
                     //yield_task();
                 }
             }).unwrap();
+        */
         pager::run_time_tests(X86_PAGER.get().unwrap());
     } else {
+        /* 
+        if cpu_id == 1 {
+            cpu_state.scheduler.new_task(||
+                {
+                    perform_sysctl_test();
+                }).unwrap();
+        }
+        */
         loop {
             println!("Hello from CPU {}", cpu_id);
             core::hint::spin_loop();
