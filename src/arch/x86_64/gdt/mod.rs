@@ -23,6 +23,7 @@ pub enum ExceptionStackIndex {
     NmiStackIndex,
     DebugStackIndex,
     MceStackIndex,
+    ExceptionStackIndexCount,
 }
 
 pub const RING_0_CODE_SELECTOR : u16 = 0x08;
@@ -43,7 +44,7 @@ pub unsafe fn create_tss(cpu_id: CpuId) {
     
     // TODO: this isn't correct !?
     (*tss_ptr).privilege_stack_table[0] =
-        VirtAddr::new(per_cpu_data::get_stack_base(cpu_id).0);
+        VirtAddr::new(per_cpu_data::get_priviledge_stack_base(cpu_id, 0).0);
 
     for stack in [ 
         ExceptionStackIndex::DoubleFaultStackIndex,

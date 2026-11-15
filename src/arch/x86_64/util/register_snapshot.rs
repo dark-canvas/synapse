@@ -1,4 +1,4 @@
-use crate::KERNEL_START;
+use crate::{KERNEL_START, arch::x86_64::smp::{get_cpu_id, per_cpu_data::get_stack_base}};
 
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
@@ -44,7 +44,8 @@ impl RegisterSnapshot {
     }
 
     pub fn dump_stack(&self) {
-        let mut stack_len = KERNEL_START - self.rsp;
+        let stack_base = get_stack_base( get_cpu_id().unwrap_or(0) );
+        let mut stack_len = stack_base.0 - self.rsp;
         println!("Stack Length: {} bytes", stack_len);
         stack_len /= 8;
         for i in 0..stack_len {

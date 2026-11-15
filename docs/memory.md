@@ -93,7 +93,8 @@ Additionally, each of the exception stack's contained in the TSS are allocated i
 
 | Item             | Number Of Pages |
 | ---------------- | --------------- |
-| Stack            | 238             |
+| Stack            | 234             |
+| Ring 0 Stack     | 4               |
 | Exception Stacks | 4 * 4 = 16      |
 | GDT + TSS        | 1               |
 | CpuState         | 1               |

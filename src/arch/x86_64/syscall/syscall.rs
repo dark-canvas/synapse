@@ -122,6 +122,11 @@ IA32_EFER	0xC0000080	Extended Feature Enable Register. Bit 0 (SCE) enables the s
         syscall_entry_msr.write(syscall_entry);
     }
 
+    let mut syscall_flag_mask_msr = x86_64::registers::model_specific::Msr::new(SFMASK);
+    unsafe {
+        syscall_flag_mask_msr.write(0x200); // clear IF on syscall entry
+    }
+
     // In Long Mode, userland CS will be loaded from STAR 63:48 + 16 and userland SS from STAR 63:48 + 8 on SYSRET. You may need to modify your GDT accordingly.
 
 
@@ -192,8 +197,14 @@ IA32_EFER	0xC0000080	Extended Feature Enable Register. Bit 0 (SCE) enables the s
         VirtualAddress(target_address), 
         PageType::Page4KB, 
         PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE).unwrap();
+    
+    // clear the page for debug purposes
+    unsafe { core::ptr::write_bytes(target_address as *mut u8, 0x0, 4096); }
 
-    let syscall_task_slice = unsafe { core::slice::from_raw_parts(syscall_task_addr as *const u8, 4096) };
-    let target_slice = unsafe { core::slice::from_raw_parts_mut(target_address as *mut u8, 4096) };
+    // TODO: need to find exactly how long this is... using 4096 bytes overwrites the zero'ing above
+    let syscall_stask_size = 1024;
+
+    let syscall_task_slice = unsafe { core::slice::from_raw_parts(syscall_task_addr as *const u8, syscall_stask_size) };
+    let target_slice = unsafe { core::slice::from_raw_parts_mut(target_address as *mut u8, syscall_stask_size) };
     target_slice.copy_from_slice(syscall_task_slice);
 }

@@ -3,12 +3,13 @@ use num_traits::AsPrimitive;
 use satus_struct::config::Config;
 use core::default::Default;
 use core::arch::asm;
+use core::sync::atomic::Ordering;
 use num_traits::PrimInt;
 use x2apic::lapic::LocalApic;
 use crate::Address;
 use crate::arch::x86_64::scheduler::Scheduler;
 use crate::arch::x86_64::scheduler::TaskHandle;
-use crate::page_based;
+use crate::smp::SmpError;
 use crate::types::CpuId;
 use crate::errors::ErrCode;
 use super::per_cpu_data;
@@ -85,6 +86,9 @@ where
 // Or just assert, since it just shouldn't be called in that case, and can be avoided
 #[allow(dead_code)]
 pub fn get_cpu_id() -> Result<CpuId, ErrCode> {
+    if !super::SMP_INITIALIZED.load(Ordering::Relaxed) {
+        return Err(ErrCode::Smp(SmpError::NotInitialized));
+    }
     Ok( unsafe { get_cpu_state_at_offset::<u8>( core::mem::offset_of!(CpuState, apic_id) ) } as CpuId )
 }
 
