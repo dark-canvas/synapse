@@ -109,3 +109,9 @@ add symbol table from file "/home/jweeks/code/synapse/target/target.x86_64/debug
 Breakpoint 1 at 0xffffff800000300e: file src/logger.rs, line 120.
 (gdb) continue
 ```
+
+### Debugging unit tests in VS Code
+
+Install the Microsoft C/C++ extension, then select **Debug all unit tests
+(GDB)** from the Run and Debug view. The launch task builds the native test
+executable and runs the full test suite serially under `rust-gdb`.

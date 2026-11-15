@@ -1,7 +1,9 @@
 KERNEL_DEPS_DIR := target/x86_64-unknown-linux-gnu/debug/deps
 KERNEL_DEBUG_LINK := $(KERNEL_DEPS_DIR)/kernel-debug
+NATIVE_TEST_DEPS_DIR := target/native/x86_64-unknown-linux-gnu/debug/deps
+NATIVE_TEST_DEBUG_LINK := $(NATIVE_TEST_DEPS_DIR)/kernel-debug
 
-.PHONY: all test doc boot debug clean kernel-debug
+.PHONY: all test test-debug doc boot debug clean kernel-debug
 
 all:
 	CARGO_TARGET_DIR=target/kernel RUSTFLAGS="-C link-arg=-Tmemory_layout.ld" cargo build -Z build-std-features=compiler-builtins-mem -Z build-std=core,compiler_builtins
@@ -18,6 +20,16 @@ kernel-debug:
 test: 
 	CARGO_TARGET_DIR=target/native cargo test --target x86_64-unknown-linux-gnu
 	@$(MAKE) --no-print-directory kernel-debug
+
+test-build:
+	CARGO_TARGET_DIR=target/native cargo test --target x86_64-unknown-linux-gnu --no-run
+	@LATEST=$$(find $(NATIVE_TEST_DEPS_DIR) -maxdepth 1 -type f -executable -name 'kernel-*' -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-); \
+	if [ -n "$$LATEST" ]; then \
+		ln -sf "$(CURDIR)/$$LATEST" $(NATIVE_TEST_DEBUG_LINK); \
+	else \
+		echo "No runnable kernel test executable found in $(NATIVE_TEST_DEPS_DIR)" >&2; \
+		exit 1; \
+	fi
 
 doc:
 	cargo test --target x86_64-unknown-linux-gnu
