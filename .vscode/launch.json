@@ -1,0 +1,39 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug all unit tests (GDB)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/native/x86_64-unknown-linux-gnu/debug/deps/kernel-debug",
+            "args": [
+                "--nocapture",
+                "--test-threads=1"
+            ],
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "RUST_BACKTRACE",
+                    "value": "1"
+                }
+            ],
+            "stopAtEntry": false,
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "rust-gdb",
+            "preLaunchTask": "Build unit-test executable",
+            "setupCommands": [
+                {
+                    "description": "Enable GDB pretty-printing",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Disable GDB pagination",
+                    "text": "set pagination off",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ]
+}
