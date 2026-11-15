@@ -92,6 +92,7 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
     // add it to the scheduler
 
     if is_bsp {
+        // TODO: these each need to have separate stacks!!
         // as a test, create another task and yield to it, then yield back to the kernel task
         cpu_state.scheduler.new_task(||
             {

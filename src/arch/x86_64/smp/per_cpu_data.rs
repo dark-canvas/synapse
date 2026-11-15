@@ -1,3 +1,5 @@
+use x86_64::PrivilegeLevel;
+
 use crate::types::CpuId;
 use crate::pager::VirtualAddress;
 use crate::arch::x86_64::gdt::ExceptionStackIndex;
@@ -12,7 +14,7 @@ use crate::pager::PAGER;
 ///
 /// Each CPU core is provided 1MB of space.
 ///
-/// The extents of this reagion can be calculated based on the CpuID of the executing core.
+/// The extents of this region can be calculated based on the CpuID of the executing core.
 /// Because the core doesn't know it's CpuID when it initially boots, the gs register is 
 /// pre-configured (via the trampoline) to point to the CpuState structure for that 
 /// specific core (and the CpuState includes the CpuID).
@@ -41,29 +43,28 @@ pub const ALLOCATION_BASE: VirtualAddress = VirtualAddress(0xFFFFFFF000000000);
 // 1MB stack and then 1mb of per-cpu state?
 // 1MB stack and intentionally unmapped page and then per-cpu state?
 pub const ALLOCATION_SIZE: usize = 1*1024*1024;
+pub const PER_CPU_STATE_ALLOCATION: usize = 4096;
+pub const GDT_TSS_ALLOCATION: usize = 4096;
 pub const STACK_SIZE: usize = ALLOCATION_SIZE - 20 * 4096;
 
 const EXCEPTION_STACK_SIZE: usize = 16384; 
-
-/*
-pub fn get_top(id: CpuId) -> VirtualAddress {
-    CPU_CORE_STACK_SPACE_TOP - (id as usize * PER_CPU_ALLOCATION_SIZE)
-}
-*/
 
 pub fn get_base(id: CpuId) -> VirtualAddress {
     ALLOCATION_BASE + (id as usize * ALLOCATION_SIZE)
 }
 
-// stack starts at the top of the per-cpu alloction, and 
+// stack starts at the top of the per-cpu allocation, and 
 // expands down
 pub fn get_stack_base(id: CpuId) -> VirtualAddress {
     get_base(id) + ALLOCATION_SIZE
 }
 
+pub fn get_priviledge_stack_base(id: CpuId, privilege_level: u8) -> VirtualAddress {
+    get_exception_stack_base(id, ExceptionStackIndex::ExceptionStackIndexCount) + (privilege_level as usize * EXCEPTION_STACK_SIZE)
+}
 
 pub fn get_exception_stack_base(id: CpuId, which: ExceptionStackIndex) -> VirtualAddress {
-    get_base(id) + 0x2000 + (which as usize * EXCEPTION_STACK_SIZE)
+    get_base(id) + PER_CPU_STATE_ALLOCATION + GDT_TSS_ALLOCATION + (which as usize * EXCEPTION_STACK_SIZE)
 }
 
 pub fn get_tss_base(id: CpuId) -> VirtualAddress {
@@ -71,7 +72,7 @@ pub fn get_tss_base(id: CpuId) -> VirtualAddress {
 }
 
 pub fn get_gdt_base(id: CpuId) -> VirtualAddress {
-    get_base(id) + 0x1000
+    get_base(id) + PER_CPU_STATE_ALLOCATION
 }
 
 pub fn get_stack_top(id: CpuId) -> VirtualAddress {
@@ -114,12 +115,12 @@ mod tests {
     fn test_get_bsp_pointers() {
         let bsp : CpuId = 0;
         assert_eq!(get_stack_base(bsp), VirtualAddress(0xFFFFFFF000100000));
-        //assert_eq!(get_stack_top(bsp), VirtualAddress(0xFFFFFFF000100000));
         assert_eq!(get_exception_stack_base(bsp, ExceptionStackIndex::DoubleFaultStackIndex), VirtualAddress(0xFFFFFFF000002000));
         assert_eq!(get_exception_stack_base(bsp, ExceptionStackIndex::NmiStackIndex), VirtualAddress(0xFFFFFFF000006000));
         assert_eq!(get_exception_stack_base(bsp, ExceptionStackIndex::DebugStackIndex), VirtualAddress(0xFFFFFFF00000a000));
         assert_eq!(get_exception_stack_base(bsp, ExceptionStackIndex::MceStackIndex), VirtualAddress(0xFFFFFFF00000e000));
-        assert_eq!(get_tss_base(bsp), VirtualAddress(0xFFFFFFF000001038));
+        assert_eq!(get_priviledge_stack_base(bsp, 0), VirtualAddress(0xFFFFFFF000012000));
+        assert_eq!(get_tss_base(bsp), VirtualAddress(0xFFFFFFF000001040));
         assert_eq!(get_gdt_base(bsp), VirtualAddress(0xFFFFFFF000001000));
         assert_eq!(get_cpu_state_base(bsp), VirtualAddress(0xFFFFFFF000000000));
     }
@@ -132,7 +133,8 @@ mod tests {
         assert_eq!(get_exception_stack_base(cpu, ExceptionStackIndex::NmiStackIndex), VirtualAddress(0xFFFFFFF000306000));
         assert_eq!(get_exception_stack_base(cpu, ExceptionStackIndex::DebugStackIndex), VirtualAddress(0xFFFFFFF00030a000));
         assert_eq!(get_exception_stack_base(cpu, ExceptionStackIndex::MceStackIndex), VirtualAddress(0xFFFFFFF00030e000));
-        assert_eq!(get_tss_base(cpu), VirtualAddress(0xFFFFFFF000301038));
+        assert_eq!(get_priviledge_stack_base(cpu, 0), VirtualAddress(0xFFFFFFF000312000));
+        assert_eq!(get_tss_base(cpu), VirtualAddress(0xFFFFFFF000301040));
         assert_eq!(get_gdt_base(cpu), VirtualAddress(0xFFFFFFF000301000));
         assert_eq!(get_cpu_state_base(cpu), VirtualAddress(0xFFFFFFF000300000));
     }

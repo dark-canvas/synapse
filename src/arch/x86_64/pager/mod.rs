@@ -127,6 +127,9 @@ pub struct Pager {
     stack_2mb: Mutex< (PageStack::<PAGE_SIZE_2MB>, Address) >,
     stack_4kb: Mutex< (PageStack::<PAGE_SIZE_4KB>, Address) >,
     kernel_cr3: u64,
+    // TODO: this should be a recursive mutex; allocating a page in different
+    // tasks on the same CPU could result in a deadlock if the scheduler *also*
+    // allocates a page (it shouldn't.. but...)
     fb_logger: Mutex< FrameBufferLogger >,
 }
 

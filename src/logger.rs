@@ -21,8 +21,8 @@ pub const LOG_BORROW_1GB: &str = "borrow_1gb";
 pub const LOG_AGGREGATE_2MB: &str = "aggregate_2mb";
 pub const LOG_AGGREGATE_1GB: &str = "aggregate_1gb";
 
-pub static LOGGER: Once<CpuMutex<SerialPort>> = Once::new();
-
+pub static LOGGER: Once<CpuMutex<SerialPort, true>> = Once::new();
+    
 pub struct FrameBufferLogger {
     address: Address,
     width: usize,
