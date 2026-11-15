@@ -55,11 +55,19 @@ where
             Some(head_node) => {
                 unsafe {
                     let next_node = (*head_node).next;
-                    self.head = Some(next_node);
+                    let result: T = (*head_node).item;
+
+                    self.head = if next_node == Self::NULL_NODE {
+                        None
+                    } else {
+                        Some(next_node)
+                    };
                     if next_node == Self::NULL_NODE {
                         self.tail = None;
                     }
-                    return Ok((*head_node).item);
+
+                    self.allocator.free(&*head_node)?;
+                    return Ok(result);
                 }
             }
             None => return Err(ErrCode::OutOfBounds),
@@ -153,6 +161,7 @@ mod tests {
 
         mock_pager.add_mapping(phys_addr, virt_addr);
         mock_pager.allow_get_virtual_address();
+        mock_pager.allow_get_physical_address();
 
         let queue = Queue::<_, BigSampleItem>::new(mock_pager.get_mock());
 
@@ -178,6 +187,7 @@ mod tests {
 
         mock_pager.add_mapping(phys_addr, virt_addr);
         mock_pager.allow_get_virtual_address();
+        mock_pager.allow_get_physical_address();
 
         let mut queue = Queue::<_, u32>::new(mock_pager.get_mock());
         
@@ -212,6 +222,7 @@ mod tests {
         mock_pager.add_mapping(phys_addr1, virt_addr1);
         mock_pager.add_mapping(phys_addr2, virt_addr2);
         mock_pager.allow_get_virtual_address();
+        mock_pager.allow_get_physical_address();
 
         // a single page can only hold 4 BigSampleItem's... and the first page, 
         // because it also contians a header, can only contain 3 BigSampleItems
