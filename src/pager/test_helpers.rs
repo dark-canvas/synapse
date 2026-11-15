@@ -99,6 +99,20 @@ impl TestPager {
         });
     }
 
+    pub fn allow_get_physical_address(&mut self) {
+        let lambda_mappings = self.phys_to_virt_mappings.clone();
+        self.mock_pager.expect_get_physical_address().returning(move |addr| {
+            for mapping in lambda_mappings.iter() {
+                if addr.0 >= mapping.virt_addr.0 && addr.0 < mapping.virt_addr.0 + 4096 {
+                    let offset = addr - mapping.virt_addr;
+                    return Ok(mapping.phys_addr + offset);
+                }
+            }
+            assert!(false, "Unexpected call to get_physical_address");
+            Err(ErrCode::Pager(PagerError::VirtualAddressNotFound(addr)))
+        });
+    }
+
     pub fn add_mapping(&mut self, phys: PhysicalAddress, virt: VirtualAddress) {
         self.phys_to_virt_mappings.push( 
             PhysicalVirtualMapping::new(phys, virt));
