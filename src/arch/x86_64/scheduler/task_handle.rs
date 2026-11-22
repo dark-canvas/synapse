@@ -13,7 +13,7 @@ impl TaskHandle {
 
     // 0 is not a valid index
     pub fn get_index(&self) -> usize {
-        self.0 as usize & Self::MAX - 1
+        (self.0 as usize & Self::MAX) - 1
     }
 
     pub fn get_generation(&self) -> u32 {

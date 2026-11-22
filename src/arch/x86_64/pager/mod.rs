@@ -251,6 +251,8 @@ pub fn next_4kb_page(addr: Address) -> Address {
 }
 
 impl PageMapper for Pager {
+    // TODO: REVISIT: there's too many versions of this?  Is this one useful?  It just returns a bool
+    // Is it even used?  The high level pager has ensure_mapped(), but it calls allocate_virtual()
     fn ensure_mapped(&self, base: VirtualAddress, end: VirtualAddress) -> Result<bool, &'static str> {
         let base = base.0;
         let end = end.0;
@@ -782,54 +784,54 @@ impl Pager {
         let pl2_index = ((virtual_addr >> 21) & 0o777) as usize;
         let pl1_index = ((virtual_addr >> 12) & 0o777) as usize;
 
-        println!("Mapping physical address {:x} to virtual address {:x} with flags {:?}", phys_addr, virtual_addr, flags);
+        println!("Mapping physical address 0x{:x} to virtual address 0x{:x} with flags 0x{:?}", phys_addr, virtual_addr, flags);
 
-            let pl4_table = get_pl4_table();
+        let pl4_table = get_pl4_table();
 
-            let pl4_entry = &mut pl4_table[pl4_index];
-            if pl4_entry.is_unused() {
-                let new_frame = (create_page_table)().ok_or("Couldn't create page table")?;
-                //info!("Setting PML4 entry {} to new frame at {:?}", pl4_index, new_frame.start_address());
-                pl4_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
-                //info!("Set PML4 entry {} to new frame at {:?}", pl4_index, new_frame.start_address());
+        let pl4_entry = &mut pl4_table[pl4_index];
+        if pl4_entry.is_unused() {
+            let new_frame = (create_page_table)().ok_or("Couldn't create page table")?;
+            //info!("Setting PML4 entry {} to new frame at {:?}", pl4_index, new_frame.start_address());
+            pl4_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+            //info!("Set PML4 entry {} to new frame at {:?}", pl4_index, new_frame.start_address());
+        }
+
+        let pl3_table = entry_to_table(&pl4_entry);
+        let pl3_entry = &mut pl3_table[pl3_index];
+        if pl3_entry.is_unused() {
+            if page_type == PageType::Page1GB {
+                pl3_entry.set_addr(PhysAddr::new(phys_addr as u64), 
+                flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
+                return Ok(());
             }
+            let new_frame = (create_page_table)().ok_or("Couldn't create page table")?;
+            pl3_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+        } else if page_type == PageType::Page1GB {
+            return Err("Virtual address already mapped");
+        }
 
-            let pl3_table = entry_to_table(&pl4_entry);
-            let pl3_entry = &mut pl3_table[pl3_index];
-            if pl3_entry.is_unused() {
-                if page_type == PageType::Page1GB {
-                    pl3_entry.set_addr(PhysAddr::new(phys_addr as u64), 
-                    flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
-                    return Ok(());
-                }
-                let new_frame = (create_page_table)().ok_or("Couldn't create page table")?;
-                pl3_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
-            } else if page_type == PageType::Page1GB {
-                return Err("Virtual address already mapped");
+        let pl2_table = entry_to_table(&pl3_entry);
+        let pl2_entry = &mut pl2_table[pl2_index];
+        if pl2_entry.is_unused() {
+            if page_type == PageType::Page2MB {
+                pl2_entry.set_addr(PhysAddr::new(phys_addr as u64), 
+                flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
+                return Ok(());
             }
+            let new_frame = (create_page_table)().ok_or("Couldn't create page table")?;
+            pl2_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+        } else if page_type == PageType::Page2MB {
+            return Err("Virtual address already mapped");
+        }
 
-            let pl2_table = entry_to_table(&pl3_entry);
-            let pl2_entry = &mut pl2_table[pl2_index];
-            if pl2_entry.is_unused() {
-                if page_type == PageType::Page2MB {
-                    pl2_entry.set_addr(PhysAddr::new(phys_addr as u64), 
-                    flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
-                    return Ok(());
-                }
-                let new_frame = (create_page_table)().ok_or("Couldn't create page table")?;
-                pl2_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
-            } else if page_type == PageType::Page2MB {
-                return Err("Virtual address already mapped");
-            }
+        let pl1_table = entry_to_table(&pl2_entry);
+        let pl1_entry = &mut pl1_table[pl1_index];
+        if !pl1_entry.is_unused() {
+            return Err("Virtual address already mapped");
+        }
 
-            let pl1_table = entry_to_table(&pl2_entry);
-            let pl1_entry = &mut pl1_table[pl1_index];
-            if !pl1_entry.is_unused() {
-                return Err("Virtual address already mapped");
-            }
-
-            // For simplicity, we only support mapping a single page here. In a real implementation, you'd want to handle larger mappings.
-            pl1_entry.set_addr(PhysAddr::new(phys_addr as u64), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+        // For simplicity, we only support mapping a single page here. In a real implementation, you'd want to handle larger mappings.
+        pl1_entry.set_addr(PhysAddr::new(phys_addr as u64), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
 
         Ok(())
     }
@@ -894,6 +896,44 @@ impl Pager {
 
             Ok(true)
     }
+
+    fn is_mapped(&self, virtual_addr: VirtualAddress) -> bool {
+        let pl4_table = get_pl4_table();
+
+        let pl4_index = (virtual_addr.0 as usize >> 39) & 0o777;
+        let pl3_index = (virtual_addr.0 as usize >> 30) & 0o777;
+        let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
+        let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
+        
+        let pl4_entry = &mut pl4_table[pl4_index];
+        if pl4_entry.is_unused() {
+            return false;
+        }
+
+        let pl3_table = entry_to_table(&pl4_entry);
+        let pl3_entry = &mut pl3_table[pl3_index];
+        if pl3_entry.is_unused() {
+            return false;
+        }
+
+        let pl2_table = entry_to_table(&pl3_entry);
+        let pl2_entry = &mut pl2_table[pl2_index];
+        if pl2_entry.is_unused() {
+            return false;
+        }
+        // TODO: handle huge pages... (JJW)
+        //if pl2_entry.flags().contains(PageTableFlags::HUGE_PAGE) &&
+        //    virtual_addr
+
+        let pl1_table = entry_to_table(&pl2_entry);
+        let pl1_entry = &mut pl1_table[pl1_index];
+        if pl1_entry.is_unused() {
+            return false;
+        }
+
+        return true;
+    }
+
     
     pub fn show_address_debug(&self, virtual_addr: VirtualAddress) {
         let pl4_table = get_pl4_table();
@@ -1042,15 +1082,28 @@ impl PagerInterface for Pager {
         self.free_4kb_page(addr.0);
         Ok(())
     }
+
     // TODO: move into page interface as a provided method
     fn allocate_virtual(&self, num_pages: usize, base_addr: VirtualAddress) -> Result<VirtualAddress, ErrCode> { 
         let mut to_addr = base_addr;
+        let mut first_mapped : Option<VirtualAddress> = None;
         for _ in 0..num_pages {
-            let phys_addr = self.allocate_physical()?;
-            PagerInterface::map_physical_to_virtual(self, phys_addr, to_addr)?;
+            if !self.is_mapped(to_addr) {
+                println!("0x{:x} not mapped; mapping", to_addr.0);
+                let phys_addr = self.allocate_physical()?;
+                PagerInterface::map_physical_to_virtual(self, phys_addr, to_addr)?;
+                if first_mapped.is_none() {
+                    first_mapped = Some(to_addr);
+                }
+            }
             to_addr += self.get_page_size();
         }
-        Ok(base_addr)
+        if first_mapped.is_none() {
+            return Err(ErrCode::Pager(PagerError::VirtualAddressAlreadyMapped(base_addr)));
+        }
+        // TODO: REVISIT... this should return either a page range, or a start + length
+        // REVISUT: could it return a PageRanges value?  possibly too complex
+        Ok(first_mapped.unwrap())
     }
     fn free_virtual(&self, _num: usize, _base_addr: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
     fn map_physical_to_virtual(&self, phys_addr: PhysicalAddress, virt_addr: VirtualAddress) -> Result<(), ErrCode> { 

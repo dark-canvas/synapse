@@ -26,20 +26,20 @@ pub enum PagerError {
 
 ///static Lazy<&dyn Pager> = Lazy::new(|| { /* pager... */ }
 
-// Defines a generic cross-platform pager implementation usble by certain primatives like page_based_list
+// Defines a generic cross-platform pager implementation usable by certain primitives like page_based_list
 // The pager is global, and so must make use of interior mutability.
-// Consider:
-// - Returns physical, or virtual, or both?
-// - Exposes mapping routines?
+// TODO: page attributes (e.g. read/write, user/supervisor, etc.)
 #[allow(dead_code)]
 #[cfg_attr(test, automock)]
 pub trait Pager: Sync {
     fn get_page_size(&self) -> usize;
+
     fn get_page_mask(&self) -> Address {
         (self.get_page_size() - 1) as Address
     }
+
+    /// Implementations will likely want to override this, as the result is a static number
     fn get_page_size_log2(&self) -> usize {
-        /// Implementations will likely want to override this, as the result is a static number
         let page_size = self.get_page_size();
         let mut log2 = 0;
         let mut size = page_size;
@@ -74,8 +74,8 @@ pub trait Pager: Sync {
         }
     }
 
-    // TODO: need to return an indication of whether a range of memory was newly mapped or not
     // NOTE: this function doesn't not handle multiple mapping ranges
+    // TODO: REVISIT: Return Ok w/ Option containing tuple of Begin/End (begin and end themselves shouldn't be options)
     fn ensure_mapped_range(&self, virtual_addr: VirtualAddress, length: usize) -> Result<(Option<VirtualAddress>, Option<VirtualAddress>), ErrCode> {
         if length == 0 {
             return Ok((None, None));
