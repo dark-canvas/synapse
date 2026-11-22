@@ -36,11 +36,11 @@ pub struct Task {
     pub rflags: u64,                     // set in yield task assembly, don't move
     pub cr3: u64, // physical address and flags
     pub user_gs_base: VirtualAddress,
-    pub kernel_stack_pointer: VirtualAddress, // don't think this is used...
+    pub kernel_stack_pointer: VirtualAddress, // points into kernel_stack
     pub cs: u16,
     pub ss: u16,
     pub id: TaskHandle,
-    pub kernel_stack: [u8; 16*1024],
+    pub kernel_stack: [u8; 16*1024],     // each task needs its own kernel stack
     pub io_bitmap: Option<&'static [u8; 8193]>,
 }
 
@@ -76,8 +76,13 @@ impl Task {
         self.rip = code_ptr as u64; // Set the instruction pointer to the trampoline function
         let offset = self.kernel_stack.len() - 8; // Reserve space for the return address
         self.kernel_stack[offset..].copy_from_slice(&self.rip.to_le_bytes());
-        self.registers.rsp = self.kernel_stack.as_ptr() as u64 + offset as u64;
-        
+        //self.registers.rsp = self.kernel_stack.as_ptr() as u64 + offset as u64;
+        let stack_top = self.kernel_stack.as_ptr() as u64
+            + self.kernel_stack.len() as u64;
+
+        self.kernel_stack_pointer = VirtualAddress(stack_top);
+        self.registers.rsp = stack_top - 8;
+
         self.rflags = 0x202; // Interrupt Enable flag
         self.cr3 = X86_PAGER.get().unwrap().get_kernel_cr3();
         self.cs = CS::get_reg().0;

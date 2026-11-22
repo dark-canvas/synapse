@@ -61,7 +61,7 @@ extern "C" fn syscall_handler()
     );
 }
 
-pub fn perform_sysctl_test() {
+pub fn perform_syscall_test() {
     unsafe {
         asm!(
             "jmp *{target}",
@@ -71,7 +71,7 @@ pub fn perform_sysctl_test() {
     }
 }
 
-// this will get copied to 0x400000 which is called from perform_sysctl_test() 
+// this will get copied to 0x400000 which is called from perform_syscall_test() 
 // above
 pub extern "C" fn syscall_test_task() {
     unsafe {
@@ -104,10 +104,6 @@ pub extern "C" fn syscall_test_task() {
 
 
 pub fn init() {
-    /*
-    
-IA32_EFER	0xC0000080	Extended Feature Enable Register. Bit 0 (SCE) enables the syscall/sysret instructions.
- */
 
     let mut efer = x86_64::registers::model_specific::Msr::new(IA32_EFER);
     unsafe {
@@ -126,33 +122,6 @@ IA32_EFER	0xC0000080	Extended Feature Enable Register. Bit 0 (SCE) enables the s
     unsafe {
         syscall_flag_mask_msr.write(0x200); // clear IF on syscall entry
     }
-
-    // In Long Mode, userland CS will be loaded from STAR 63:48 + 16 and userland SS from STAR 63:48 + 8 on SYSRET. You may need to modify your GDT accordingly.
-
-
-    /*
-    Bits 63:48	SYSRET Selector Base	The base segment selector used during a SYSRET back to user space.
-    Bits 47:32	SYSCALL Selector Base	The base segment selector used during a SYSCALL into kernel space.
-    */
-
-    /*
-    • Bits 63:48 (SYSRET Base Selector):
-        When executing a 64-bit SYSRET, the processor calculates the target User Code Segment (CS) selector 
-        by adding +16 to this base value. The target User Stack Segment (SS) selector is calculated by 
-        adding +8 to this base value.
-    • Bits 47:32 (SYSCALL Base Selector):
-        When executing SYSCALL, the processor sets the target Kernel Code Segment (CS) selector exactly to 
-        this base value. The target Kernel Stack Segment (SS) selector is automatically set to this base 
-        value +8.
-     */
-    /* 
-    pub const RING_0_CODE_SELECTOR : u16 = 0x08;   SYSCALL base = 0x8, which makes SS = 0x10
-    pub const RING_0_DATA_SELECTOR : u16 = 0x10;
-    pub const RING_3_CODE_SELECTOR : u16 = 0x18;   SYSRET base = 0x8, which makes CS = 0x8 + 16 = 0x18
-                                                                      which makes SS = 0x8 + 8 !??
-    pub const RING_3_DATA_SELECTOR : u16 = 0x20;
-    pub const TSS_SELECTOR : u16 = 0x28;
-    */
 
     // sysret  base (bits 63:48) = 0x18
     //   therefore:
@@ -173,8 +142,8 @@ IA32_EFER	0xC0000080	Extended Feature Enable Register. Bit 0 (SCE) enables the s
         syscall_selectors_msg.write(selector_bases);
     }
 
-    let star = unsafe { x86_64::registers::model_specific::Msr::new(0xC000_0081).read() };
-    println!("STAR={:#018x}", star);
+    //let star = unsafe { x86_64::registers::model_specific::Msr::new(0xC000_0081).read() };
+    //println!("STAR={:#018x}", star);
 
     // The rest of this we only want to do once...
     let cpu_id = smp::get_cpu_id().unwrap();

@@ -106,6 +106,7 @@ where
             return Err(ErrCode::OutOfHandles);
         }
     }
+    
     fn free(&mut self, task: &Self::Task) -> Result<(), ErrCode> {
         let handle = task.get_handle();
         let index = handle.get_index();

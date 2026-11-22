@@ -1,16 +1,16 @@
 use x86_64::VirtAddr;
-use x86_64::registers::rflags::RFlags;
-use x86_64::structures::gdt::SegmentSelector;
-//use x86_64::structures::idt::InterruptStackFrame;
-use x86_64::structures::idt::InterruptStackFrameValue;
 
 use super::Task;
 use super::TaskMap;
 use super::TaskList;
-use super::TASK_MAP_BASE_ADDRESS;
 use super::super::GlobalData;
 use super::super::smp::CpuState;
+use crate::arch::x86_64::X86_PAGER;
+use crate::arch::x86_64::gdt::RING_0_CODE_SELECTOR;
+use crate::arch::x86_64::gdt::RING_0_DATA_SELECTOR;
 use crate::arch::x86_64::scheduler::TaskHandle;
+use crate::arch::x86_64::smp::per_cpu_data;
+use crate::arch::x86_64::util::registers::set_cr3;
 use crate::errors::ErrCode;
 use crate::pager::Pager;
 use crate::pager::PAGER;
@@ -201,6 +201,12 @@ impl Scheduler {
         // the registers here, as the first time we yield, we'll save off the current state of the kernel.
         let mut task_map = GlobalData::get().task_map.lock().unwrap();
         let task = task_map.allocate().unwrap();
+        // TODO: need to initialize cr3, kernel_stack_pointer, rflags, cs and ss here!!!
+        task.cr3 = X86_PAGER.get().unwrap().get_kernel_cr3();
+        task.cs = RING_0_CODE_SELECTOR;
+        task.ss = RING_0_DATA_SELECTOR;
+        task.rflags = 0x202;
+        // do we need to set kernel_stack_pointer for a kernel task?
         let cpu_state = CpuState::get_local_cpu_state();
         cpu_state.current_tid = task.get_handle();
         println!("Set current task ID to {} for CPU {}", cpu_state.current_tid, cpu_state.get_cpu_id());
@@ -226,9 +232,6 @@ impl SchedulerInterface for Scheduler {
     type TaskMap = TaskMap<&'static dyn Pager>;
     type TaskList = TaskList;
 
-    // REVISTIT: this consumes task... is it okay?  Is it efficient (check the assembly)
-    // TODO: I think it's not okay... the task comes form TaskMap and shouldn't ever be copied.
-    // The lists should be of TaskID which can be used to index into the taskmap!
     fn add_task(&mut self, task: &Self::Task) -> Result<(), ErrCode> {
         self.tasks.enqueue(task.get_handle()).unwrap();
         Ok(())
@@ -242,11 +245,22 @@ impl SchedulerInterface for Scheduler {
         &mut self.tasks
     }
     
-    fn switch_to_task(&mut self, task: Self::TaskHandle) {
+    fn switch_to_task(&mut self, task_handle: Self::TaskHandle) {
         let cpu_state = CpuState::get_local_cpu_state();
+        let cpu_id = cpu_state.get_cpu_id();
 
-        // Add back to the end (TODO: if still able to run)
+        // Add the former current task back to the end (TODO: if still able to run)
         self.tasks.enqueue(cpu_state.current_tid).unwrap();
+
+        let task_map = GlobalData::get().task_map.lock().unwrap();
+        let task = task_map.get(task_handle).unwrap();
+
+        // update the kernel stack
+        let tss = per_cpu_data::get_tss(cpu_id);
+        tss.privilege_stack_table[0] = VirtAddr::new(task.kernel_stack_pointer.0);
+
+        // update the address space (via cr3)
+        set_cr3(task.cr3);
 
         // TODO: we've already saved off all the registers via the timer interrupt (or yield_task)
         // but if a task switch is actually happening, then other state should be saved here
@@ -254,9 +268,8 @@ impl SchedulerInterface for Scheduler {
         // - anything else?
 
         // also, at this point, we should probably:
-        // - restore the new task's CR3
         // - restore the new task's thread-local storage (gs/fs base)
 
-        cpu_state.current_tid = task;
+        cpu_state.current_tid = task_handle;
     }
 }

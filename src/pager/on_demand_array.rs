@@ -24,6 +24,7 @@ where
     }
 
     pub fn get_mut(&self, i: usize) -> Result<&'static mut T, ErrCode> {
+        //println!("OnDemandArray get_mut {}", i);
         if i >= self.num_items {
             return Err(ErrCode::OutOfBounds);
         }
@@ -34,7 +35,9 @@ where
             Ok((begin, end)) => unsafe {
                 // We could make zero'ing the memory optional, but it seems safer to just do it
                 if  begin.is_some() && end.is_some() {
-                    core::ptr::write_bytes(begin.unwrap().0 as *mut u8, 0x0, (end.unwrap().0 - begin.unwrap().0) as usize);
+                    println!("Clearing from {:#x} to {:#x}", 
+                        begin.unwrap().0, end.unwrap().0);
+                    core::ptr::write_bytes(begin.unwrap().0 as *mut u8, 0x00, (end.unwrap().0 - begin.unwrap().0) as usize);
                 }
                 Ok(&mut *(base.0 as *mut T))
             }

@@ -15,7 +15,7 @@ use core::arch::asm;
 
 use crate::arch::x86_64::scheduler::yield_task;
 use crate::arch::x86_64::syscall::syscall_test_task;
-use crate::arch::x86_64::syscall::perform_sysctl_test;
+use crate::arch::x86_64::syscall::perform_syscall_test;
 use crate::arch::x86_64::x2apic::timer::timer_init;
 use crate::pager::PAGER;
 
@@ -96,10 +96,10 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
         // as a test, create another task and yield to it, then yield back to the kernel task
         cpu_state.scheduler.new_task(||
             {
-                println!("Trying sysctl test task...");
-                perform_sysctl_test();
+                println!("Trying syscall test task...");
+                perform_syscall_test();
             }).unwrap();
-        /* 
+        /* TODO: enabling this doesn't work 
         cpu_state.scheduler.new_task(|| 
             {
                 loop {
@@ -110,14 +110,6 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
         */
         pager::run_time_tests(X86_PAGER.get().unwrap());
     } else {
-        /* 
-        if cpu_id == 1 {
-            cpu_state.scheduler.new_task(||
-                {
-                    perform_sysctl_test();
-                }).unwrap();
-        }
-        */
         loop {
             println!("Hello from CPU {}", cpu_id);
             core::hint::spin_loop();

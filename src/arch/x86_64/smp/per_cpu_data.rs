@@ -71,6 +71,11 @@ pub fn get_tss_base(id: CpuId) -> VirtualAddress {
     get_gdt_base(id) + GDT_SIZE
 }
 
+pub fn get_tss(id: CpuId) -> &'static mut x86_64::structures::tss::TaskStateSegment {
+    let tss_base = get_tss_base(id);
+    unsafe { &mut *(tss_base.0 as *mut x86_64::structures::tss::TaskStateSegment) }
+}
+
 pub fn get_gdt_base(id: CpuId) -> VirtualAddress {
     get_base(id) + PER_CPU_STATE_ALLOCATION
 }
