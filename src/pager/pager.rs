@@ -74,11 +74,10 @@ pub trait Pager: Sync {
         }
     }
 
-    // NOTE: this function doesn't not handle multiple mapping ranges
-    // TODO: REVISIT: Return Ok w/ Option containing tuple of Begin/End (begin and end themselves shouldn't be options)
-    fn ensure_mapped_range(&self, virtual_addr: VirtualAddress, length: usize) -> Result<(Option<VirtualAddress>, Option<VirtualAddress>), ErrCode> {
+    // NOTE: this function does not handle multiple mapping ranges
+    fn ensure_mapped_range(&self, virtual_addr: VirtualAddress, length: usize) -> Result<Option<(VirtualAddress, VirtualAddress)>, ErrCode> {
         if length == 0 {
-            return Ok((None, None));
+            return Ok(None);
         }
 
         let page_size = self.get_page_size();
@@ -98,7 +97,12 @@ pub trait Pager: Sync {
                 mapped_end = Some(addr + page_size);
             }
         }
-        Ok((mapped_begin, mapped_end))
+
+        if mapped_begin.is_some() {
+            return Ok( Some( (mapped_begin.unwrap(), mapped_end.unwrap() ) ))
+        } else {
+            return Ok( None );
+        }
     }
 }
 
@@ -146,7 +150,7 @@ where
         (*self).ensure_mapped(virtual_addr)
     }
 
-    fn ensure_mapped_range(&self, virtual_addr: VirtualAddress, length: usize) -> Result<(Option<VirtualAddress>, Option<VirtualAddress>), ErrCode> {
+    fn ensure_mapped_range(&self, virtual_addr: VirtualAddress, length: usize) -> Result<Option<(VirtualAddress, VirtualAddress)>, ErrCode> {
         (*self).ensure_mapped_range(virtual_addr, length)
     }
 }

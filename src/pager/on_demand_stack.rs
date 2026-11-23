@@ -84,7 +84,7 @@ mod tests {
                     predicate::eq(core::mem::size_of::<u32>()),
                 )
                 .times(1)
-                .returning(|_, _| Ok((None, None)));
+                .returning(|_, _| Ok(None));
         }
 
         let mut stack = OnDemandStack::<_, u32>::new(pager.get_mock(), VirtualAddress(base), 3);
@@ -107,7 +107,7 @@ mod tests {
         pager.expect_ensure_mapped_range()
             .with(predicate::eq(VirtualAddress(base)), predicate::eq(core::mem::size_of::<u32>()))
             .times(1)
-            .returning(|_, _| Ok((None, None)));
+            .returning(|_, _| Ok(None));
 
         let mut stack = OnDemandStack::<_, u32>::new(pager.get_mock(), VirtualAddress(base), 1);
         assert_eq!(stack.push(10), Ok(()));
@@ -138,9 +138,8 @@ mod tests {
                 if attempts == 1 { 
                     Err(ErrCode::Unknown) 
                 } else { 
-                    Ok( (
-                        Some(VirtualAddress(base)), 
-                        Some(VirtualAddress(base + 4096))
+                    Ok( Some(
+                        ( VirtualAddress(base), VirtualAddress(base + 4096) )
                         )
                     )
                 }

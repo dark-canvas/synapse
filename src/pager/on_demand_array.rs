@@ -32,12 +32,13 @@ where
         let base = self.base_address + offset;
         let length = core::mem::size_of::<T>();
         match self.pager.ensure_mapped_range(base, length) {
-            Ok((begin, end)) => unsafe {
+            Ok(range) => unsafe {
                 // We could make zero'ing the memory optional, but it seems safer to just do it
-                if  begin.is_some() && end.is_some() {
+                if range.is_some() {
+                    let (begin, end) = range.unwrap();
                     println!("Clearing from {:#x} to {:#x}", 
-                        begin.unwrap().0, end.unwrap().0);
-                    core::ptr::write_bytes(begin.unwrap().0 as *mut u8, 0x00, (end.unwrap().0 - begin.unwrap().0) as usize);
+                        begin.0, end.0);
+                    core::ptr::write_bytes(begin.0 as *mut u8, 0x00, (end - begin) as usize);
                 }
                 Ok(&mut *(base.0 as *mut T))
             }
@@ -92,7 +93,7 @@ mod tests {
                 predicate::eq(core::mem::size_of::<HalfPage>())
             )
             .times(1)
-            .returning(|_,_| Ok((None, None)) );
+            .returning(|_,_| Ok(None) );
 
         let array = OnDemandArray::<_, HalfPage>::new(pager.get_mock(), VirtualAddress(0x1000000), 10);
         let result = array.get(0);
@@ -118,7 +119,7 @@ mod tests {
                 predicate::eq(core::mem::size_of::<HalfPage>())
             )
             .times(1)
-            .returning(|_,_| Ok((None, None)) );
+            .returning(|_,_| Ok(None) );
 
         let array = OnDemandArray::<_, HalfPage>::new(pager.get_mock(), VirtualAddress(base), 10);
         let result = array.get(6);
@@ -142,7 +143,7 @@ mod tests {
                 predicate::eq(core::mem::size_of::<HalfPage>())
             )
             .times(1)
-            .returning(|_,_| Ok((None, None)) );
+            .returning(|_,_| Ok(None) );
 
         let array = OnDemandArray::<_, HalfPage>::new(pager.get_mock(), VirtualAddress(base), 10);
         let result = array.get(3);
