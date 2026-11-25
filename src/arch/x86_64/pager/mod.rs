@@ -49,7 +49,7 @@ use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::PageTable;
 use x86_64::structures::paging::PageTableFlags;
 use x86_64::structures::paging::page_table::PageTableEntry;
-use crate::pager::VirtualAddress;
+use crate::pager::{PhysicalAddress, VirtualAddress};
 use crate::types::Address;
 use super::X86_PAGER;
 
@@ -219,16 +219,16 @@ pub fn next_4kb_page(addr: Address) -> Address {
 pub fn run_time_tests(pager: &Pager) {
     // First test that the physical "itentity mapped" region exists at PHYSICAL_OFFSET
     let page = pager.allocate_page(PageType::Page4KB).expect("Must be able to acquire 4kb page");
-    println!("Allocated page at 0x{:016x}", page);
-    unsafe { core::ptr::write_bytes(physical_mirror(page) as *mut u8, 0xff, 4096); }
+    println!("Allocated page at 0x{:016x}", page.0);
+    unsafe { core::ptr::write_bytes(physical_mirror(page.0) as *mut u8, 0xff, 4096); }
 
-    let phys_test_addr = (page + PHYSICAL_OFFSET) as *const u8;
+    let phys_test_addr = (page.0 + PHYSICAL_OFFSET) as *const u8;
     let phys_test_array: &[u8; 4096] = unsafe {
         &*(phys_test_addr as *const [u8; 4096])
     };
     assert_eq!(phys_test_array[0], 0xff);
 
-    unsafe { core::ptr::write_bytes(physical_mirror(page) as *mut u8, 0x80, 4096); }
+    unsafe { core::ptr::write_bytes(physical_mirror(page.0) as *mut u8, 0x80, 4096); }
     assert_eq!(phys_test_array[0], 0x80);
 
     pager.free_page(PageType::Page4KB, page);
@@ -241,8 +241,8 @@ pub fn run_time_tests(pager: &Pager) {
     let mut first_page: Option<Address> = None;
     let mut last_page: Address = 0;
     let mut count = 0;
-    while let Some(mut page) = pager.allocate_4kb_page() {
-        page += PHYSICAL_OFFSET;
+    while let Some(page) = pager.allocate_4kb_page() {
+        let page = page.0 + PHYSICAL_OFFSET;
 
         println!("Allocated 0x{:016x}", page);
         count += 1;
@@ -293,7 +293,7 @@ pub fn run_time_tests(pager: &Pager) {
                 let next_page_ptr = address as *mut u64;
                 *next_page_ptr
             };
-            pager.free_4kb_page(address - PHYSICAL_OFFSET);
+            pager.free_4kb_page(PhysicalAddress(address - PHYSICAL_OFFSET));
             address = next_page;
         }
     }

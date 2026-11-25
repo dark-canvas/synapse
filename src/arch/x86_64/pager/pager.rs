@@ -251,18 +251,21 @@ impl Pager {
         // exclude those from the page iterator we use to populate the 4kb stack, otherwise we'll end up pushing 
         // pages onto the stack which could be in ues as page tables/dircetories, or mapped in to the page stack itself.
         let available_1gb_pages = PageIterator::new(&mmap, PAGE_SIZE_1GB)
-                .with_region_type(MemoryRegionType::Available);
+                .with_region_type(MemoryRegionType::Available)
+                .map(PhysicalAddress);
         
         let available_2mb_pages = PageIterator::new(&mmap, PAGE_SIZE_2MB)
                 .with_region_type(MemoryRegionType::Available)
                 .with_base_address(
-                    two_mb_page_allocator.get_current().unwrap_or(0));
+                    two_mb_page_allocator.get_current().unwrap_or(0))
+                .map(PhysicalAddress);
         
         let available_4kb_pages = PageIterator::new(&mmap, PAGE_SIZE_4KB)
                 .with_region_type(MemoryRegionType::Available)
                 .excluding_range(
                     kernel_physical_start,
-                    four_kb_page_allocator.get_current().unwrap_or(required_base));
+                    four_kb_page_allocator.get_current().unwrap_or(required_base))
+                .map(PhysicalAddress);
 
         let (addr, flags) = Cr3::read_raw();
         let cr3_value = addr.start_address().as_u64() | flags as u64;
@@ -317,11 +320,11 @@ impl Pager {
     // count which was never incremented for it?
     // Having various UTs for these interactions can help prove/deny this.
 
-    pub fn allocate_1gb_page(&self) -> Option<Address> {
+    pub fn allocate_1gb_page(&self) -> Option<PhysicalAddress> {
         self.stack_1gb.lock().0.allocate_page()
     }
 
-    pub fn allocate_2mb_page(&self) -> Option<Address> {
+    pub fn allocate_2mb_page(&self) -> Option<PhysicalAddress> {
         let mut stack_2mb = self.stack_2mb.lock();
         match stack_2mb.0.allocate_page() {
             Some(addr) => Some(addr),
@@ -330,7 +333,7 @@ impl Pager {
                 write!(self.fb_logger.lock(), "{}", LOG_BORROW_1GB).unwrap();
                 if let Some(addr) = self.take_1gb_page() {
                     for i in 1..512 {
-                        stack_2mb.0.give(addr + (i*PAGE_SIZE_2MB) as Address);
+                        stack_2mb.0.give(addr + i * PAGE_SIZE_2MB);
                     }
                     stack_2mb.0.mark_allocated(addr);
                     Some(addr)
@@ -341,7 +344,7 @@ impl Pager {
         }
     }
 
-    pub fn allocate_4kb_page(&self) -> Option<Address> {
+    pub fn allocate_4kb_page(&self) -> Option<PhysicalAddress> {
         write!(self.fb_logger.lock(), "{}", LOG_ALLOC_4KB).unwrap();
         let mut stack_4kb = self.stack_4kb.lock();
         match stack_4kb.0.allocate_page() {
@@ -351,7 +354,7 @@ impl Pager {
                 write!(self.fb_logger.lock(), "{}", LOG_BORROW_2MB).unwrap();
                 if let Some(addr) = self.take_2mb_page() {
                     for i in 1..512 {
-                        stack_4kb.0.give(addr + (i*PAGE_SIZE_4KB) as Address);
+                        stack_4kb.0.give(addr + i * PAGE_SIZE_4KB);
                     }
                     stack_4kb.0.mark_allocated(addr);
                     Some(addr)
@@ -362,7 +365,7 @@ impl Pager {
         }
     }
 
-    pub fn allocate_page(&self, page_type: PageType) -> Option<Address> {
+    pub fn allocate_page(&self, page_type: PageType) -> Option<PhysicalAddress> {
         match page_type {
             PageType::Page4KB => self.allocate_4kb_page(),
             PageType::Page2MB => self.allocate_2mb_page(),
@@ -373,29 +376,29 @@ impl Pager {
     fn allocate_page_table(&self) -> Option<PhysFrame::<Size4KiB>> {
         self.allocate_4kb_page().map(|addr| {
             unsafe {  
-                core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
-                PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
+                core::ptr::write_bytes(physical_mirror(addr.0) as *mut u8, 0, 0x1000);
+                PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr.0))
             }
         })
     }
 
-    fn give_1gb_page(&self, address: Address) {
+    fn give_1gb_page(&self, address: PhysicalAddress) {
         let mut stack_1gb = self.stack_1gb.lock();
         stack_1gb.0.give(address);
     }
 
-    fn give_2mb_page(&self, address: Address) {
+    fn give_2mb_page(&self, address: PhysicalAddress) {
         let mut stack_2mb = self.stack_2mb.lock();
         if let Some(agg_addr) = stack_2mb.0.give(address) {
             self.give_1gb_page(agg_addr);
         }
     }
 
-    fn take_1gb_page(&self) -> Option<Address> {
+    fn take_1gb_page(&self) -> Option<PhysicalAddress> {
         self.stack_1gb.lock().0.take()
     }
 
-    fn take_2mb_page(&self) -> Option<Address> {
+    fn take_2mb_page(&self) -> Option<PhysicalAddress> {
         let mut stack_2mb = self.stack_2mb.lock();
         match stack_2mb.0.take() {
             Some(addr) => Some(addr),
@@ -404,7 +407,7 @@ impl Pager {
                 println!("Taking 1gb page");
                 if let Some(addr) = self.take_1gb_page() {
                     for i in 1..512 {
-                        stack_2mb.0.give(addr + (i*PAGE_SIZE_2MB) as Address);
+                    stack_2mb.0.give(addr + i * PAGE_SIZE_2MB);
                     }
                     Some(addr)
                 } else {
@@ -414,12 +417,12 @@ impl Pager {
         }
     }
 
-    pub fn free_1gb_page(&self, address: Address) {
+    pub fn free_1gb_page(&self, address: PhysicalAddress) {
         let mut stack_1gb = self.stack_1gb.lock();
 
         if stack_1gb.0.top() >= stack_1gb.1 {
             let _ = self.map_physical_to_virtual(
-                PhysicalAddress(self.stack_4kb.lock().0.allocate_page().unwrap()),
+                self.stack_4kb.lock().0.allocate_page().unwrap(),
                 VirtualAddress(stack_1gb.1),
                 PageType::Page4KB,
                 PageTableFlags::GLOBAL | PageTableFlags::WRITABLE,
@@ -431,12 +434,12 @@ impl Pager {
         stack_1gb.0.deallocate_page(address);
     }
 
-    pub fn free_2mb_page(&self, address: Address) {
+    pub fn free_2mb_page(&self, address: PhysicalAddress) {
         let mut stack_2mb = self.stack_2mb.lock();
 
         if stack_2mb.0.top() >= stack_2mb.1 {
             let _ = self.map_physical_to_virtual(
-                PhysicalAddress(self.stack_4kb.lock().0.allocate_page().unwrap()),
+                self.stack_4kb.lock().0.allocate_page().unwrap(),
                 VirtualAddress(stack_2mb.1),
                 PageType::Page4KB,
                 PageTableFlags::GLOBAL | PageTableFlags::WRITABLE,
@@ -458,13 +461,13 @@ impl Pager {
         }
     }
 
-    pub fn free_4kb_page(&self, address: Address) {
+    pub fn free_4kb_page(&self, address: PhysicalAddress) {
         let mut stack_4kb = self.stack_4kb.lock();
 
         if stack_4kb.0.top() >= stack_4kb.1 {
             // TODO: if we're freeing a 4kb page, and the stack is full, can it just extend the top of the stack?
             let _ = Self::_map_physical_to_virtual(
-                PhysicalAddress(stack_4kb.0.allocate_page().unwrap()),
+                stack_4kb.0.allocate_page().unwrap(),
                 VirtualAddress(stack_4kb.1),
                 PageType::Page4KB,
                 PageTableFlags::GLOBAL | PageTableFlags::WRITABLE,
@@ -472,8 +475,8 @@ impl Pager {
                     // we're already holding the 4kb page stack lock...
                     stack_4kb.0.allocate_page().map(|addr| {
                         unsafe {
-                            core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
-                            PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
+                            core::ptr::write_bytes(physical_mirror(addr.0) as *mut u8, 0, 0x1000);
+                            PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr.0))
                         }
                     })
                 },
@@ -484,13 +487,13 @@ impl Pager {
         write!(self.fb_logger.lock(), "{}", LOG_FREE_4KB).unwrap();
         if let Some(agg_addr) = stack_4kb.0.deallocate_page(address) {
             write!(self.fb_logger.lock(), "{}", LOG_AGGREGATE_2MB).unwrap();
-            println!("Aggregated to 2mb 0x{:016x}", agg_addr);
+            println!("Aggregated to 2mb 0x{:016x}", agg_addr.0);
             drop(stack_4kb);
             self.give_2mb_page(agg_addr);
         }
     }
 
-    pub fn free_page(&self, page_type: PageType, address: Address) {
+    pub fn free_page(&self, page_type: PageType, address: PhysicalAddress) {
         match page_type {
             PageType::Page4KB => self.free_4kb_page(address),
             PageType::Page2MB => self.free_2mb_page(address),
@@ -554,8 +557,8 @@ impl Pager {
                 self.stack_4kb.lock().0.allocate_page().map(
                     |addr| {
                         unsafe {  
-                            core::ptr::write_bytes(physical_mirror(addr) as *mut u8, 0, 0x1000);
-                            PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr))
+                            core::ptr::write_bytes(physical_mirror(addr.0) as *mut u8, 0, 0x1000);
+                            PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(addr.0))
                         }
                     }
                 )
@@ -648,7 +651,7 @@ impl Pager {
             let pl3_entry = &mut pl3_table[pl3_index];
             if pl3_entry.is_unused() {
                 if page_type == PageType::Page1GB {
-                    pl3_entry.set_addr(PhysAddr::new(self.allocate_1gb_page().ok_or("Couldn't allocate 1GB page")? as u64), 
+                    pl3_entry.set_addr(PhysAddr::new(self.allocate_1gb_page().ok_or("Couldn't allocate 1GB page")?.0),
                     flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
                     return Ok(true);
                 }
@@ -666,7 +669,7 @@ impl Pager {
             let pl2_entry = &mut pl2_table[pl2_index];
             if pl2_entry.is_unused() {
                 if page_type == PageType::Page2MB {
-                    pl2_entry.set_addr(PhysAddr::new(self.allocate_2mb_page().ok_or("Couldn't allocate 2MB page")? as u64), 
+                    pl2_entry.set_addr(PhysAddr::new(self.allocate_2mb_page().ok_or("Couldn't allocate 2MB page")?.0),
                     flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
                     return Ok(true);
                 }
@@ -686,7 +689,7 @@ impl Pager {
                 return Ok(false)
             }
 
-            pl1_entry.set_addr(PhysAddr::new(self.allocate_4kb_page().ok_or("Couldn't allocate 4KB page")? as u64), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+            pl1_entry.set_addr(PhysAddr::new(self.allocate_4kb_page().ok_or("Couldn't allocate 4KB page")?.0), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
 
             Ok(true)
     }
@@ -787,10 +790,10 @@ impl PagerInterface for Pager {
     }
 
     fn allocate_physical(&self) -> Result<PhysicalAddress, ErrCode> { 
-        self.allocate_4kb_page().map(PhysicalAddress).ok_or(ErrCode::OutOfMemory)
+        self.allocate_4kb_page().ok_or(ErrCode::OutOfMemory)
     }
     fn free_physical(&self, addr: PhysicalAddress) -> Result<(), ErrCode> { 
-        self.free_4kb_page(addr.0);
+        self.free_4kb_page(addr);
         Ok(())
     }
 
@@ -883,9 +886,9 @@ mod tests {
 
     struct TestPager {
         pager: Pager,
-        stack_1gb: Box< [Address] >,
-        stack_2mb: Box< [Address] >,
-        stack_4kb: Box< [Address] >,
+        stack_1gb: Box< [PhysicalAddress] >,
+        stack_2mb: Box< [PhysicalAddress] >,
+        stack_4kb: Box< [PhysicalAddress] >,
         aggregator_512gb: Box< [PageBucket] >,
         aggregator_1gb: Box< [PageBucket] >,
         aggregator_2mb: Box< [PageBucket] >,
@@ -912,16 +915,16 @@ mod tests {
             let total_2mb_stack_addresses = config.count_2mb_pages + config.count_1gb_borrows * ADDRESSES_PER_PAGE;
             let total_1gb_stack_addresses = config.count_1gb_pages;
 
-            let stack_4kb_memory = vec![0u8; (total_4kb_stack_addresses * size_of::<Address>()) as usize].into_boxed_slice();
-            let stack_2mb_memory = vec![0u8; (total_2mb_stack_addresses * size_of::<Address>()) as usize].into_boxed_slice();
-            let stack_1gb_memory = vec![0u8; (total_1gb_stack_addresses * size_of::<Address>()) as usize].into_boxed_slice();
+            let stack_4kb_memory = vec![PhysicalAddress(0); total_4kb_stack_addresses].into_boxed_slice();
+            let stack_2mb_memory = vec![PhysicalAddress(0); total_2mb_stack_addresses].into_boxed_slice();
+            let stack_1gb_memory = vec![PhysicalAddress(0); total_1gb_stack_addresses].into_boxed_slice();
 
-            let stack_4kb_memory_addr = (Box::into_raw(stack_4kb_memory) as *mut Address) as Address;
-            let stack_2mb_memory_addr = (Box::into_raw(stack_2mb_memory) as *mut Address) as Address;
-            let stack_1gb_memory_addr = (Box::into_raw(stack_1gb_memory) as *mut Address) as Address;
-            let stack_4kb_memory_addr_top = stack_4kb_memory_addr + (total_4kb_stack_addresses * size_of::<Address>()) as Address;
-            let stack_2mb_memory_addr_top = stack_2mb_memory_addr + (total_2mb_stack_addresses * size_of::<Address>()) as Address;
-            let stack_1gb_memory_addr_top = stack_1gb_memory_addr + (total_1gb_stack_addresses * size_of::<Address>()) as Address;
+            let stack_4kb_memory_addr = (Box::into_raw(stack_4kb_memory) as *mut PhysicalAddress) as Address;
+            let stack_2mb_memory_addr = (Box::into_raw(stack_2mb_memory) as *mut PhysicalAddress) as Address;
+            let stack_1gb_memory_addr = (Box::into_raw(stack_1gb_memory) as *mut PhysicalAddress) as Address;
+            let stack_4kb_memory_addr_top = stack_4kb_memory_addr + (total_4kb_stack_addresses * size_of::<PhysicalAddress>()) as Address;
+            let stack_2mb_memory_addr_top = stack_2mb_memory_addr + (total_2mb_stack_addresses * size_of::<PhysicalAddress>()) as Address;
+            let stack_1gb_memory_addr_top = stack_1gb_memory_addr + (total_1gb_stack_addresses * size_of::<PhysicalAddress>()) as Address;
 
             // allocate memory for page aggregators (TODO: calc the real size)
             let page_aggregator_512gb_memory = vec![PageBucket{allocated:0, available:0}; 4096].into_boxed_slice();
@@ -942,7 +945,8 @@ mod tests {
                                 PAGE_STACK_1GB_MAX_PAGES,
                                 page_aggregator_512gb_memory_addr as Address,
                                 (first_1gb_address..(first_1gb_address + (config.count_1gb_pages * PAGE_SIZE_1GB) as Address))
-                                    .step_by(PAGE_SIZE_1GB as usize)),
+                                    .step_by(PAGE_SIZE_1GB as usize)
+                                    .map(PhysicalAddress)),
                             stack_1gb_memory_addr_top
                         )
                     ),
@@ -953,7 +957,8 @@ mod tests {
                                 PAGE_STACK_2MB_MAX_PAGES,
                                 page_aggregator_1gb_memory_addr as Address,
                                 (first_2mb_address..(first_2mb_address + (config.count_2mb_pages * PAGE_SIZE_2MB) as Address))
-                                    .step_by(PAGE_SIZE_2MB as usize)),
+                                    .step_by(PAGE_SIZE_2MB as usize)
+                                    .map(PhysicalAddress)),
                             stack_2mb_memory_addr_top
                         )
                     ),
@@ -964,7 +969,8 @@ mod tests {
                                 PAGE_STACK_4KB_MAX_PAGES,
                                 page_aggregator_2mb_memory_addr as Address,
                                 (first_4kb_address..(first_4kb_address + (config.count_4kb_pages * PAGE_SIZE_4KB) as Address))
-                                    .step_by(PAGE_SIZE_4KB as usize)),
+                                    .step_by(PAGE_SIZE_4KB as usize)
+                                    .map(PhysicalAddress)),
                             stack_4kb_memory_addr_top
                         )
                     ),
@@ -976,9 +982,9 @@ mod tests {
 
             TestPager {
                 pager: pager,
-                stack_1gb: unsafe { Box::from_raw(core::slice::from_raw_parts_mut(stack_1gb_memory_addr as *mut Address, total_1gb_stack_addresses)) },
-                stack_2mb: unsafe { Box::from_raw(core::slice::from_raw_parts_mut(stack_2mb_memory_addr as *mut Address, total_2mb_stack_addresses)) },
-                stack_4kb: unsafe { Box::from_raw(core::slice::from_raw_parts_mut(stack_4kb_memory_addr as *mut Address, total_4kb_stack_addresses)) },
+                stack_1gb: unsafe { Box::from_raw(core::slice::from_raw_parts_mut(stack_1gb_memory_addr as *mut PhysicalAddress, total_1gb_stack_addresses)) },
+                stack_2mb: unsafe { Box::from_raw(core::slice::from_raw_parts_mut(stack_2mb_memory_addr as *mut PhysicalAddress, total_2mb_stack_addresses)) },
+                stack_4kb: unsafe { Box::from_raw(core::slice::from_raw_parts_mut(stack_4kb_memory_addr as *mut PhysicalAddress, total_4kb_stack_addresses)) },
                 aggregator_512gb: unsafe { Box::from_raw(core::slice::from_raw_parts_mut(page_aggregator_512gb_memory_addr as *mut PageBucket, 4096)) },
                 aggregator_1gb: unsafe { Box::from_raw(core::slice::from_raw_parts_mut(page_aggregator_1gb_memory_addr as *mut PageBucket, 4096)) },
                 aggregator_2mb: unsafe { Box::from_raw(core::slice::from_raw_parts_mut(page_aggregator_2mb_memory_addr as *mut PageBucket, 262144)) },

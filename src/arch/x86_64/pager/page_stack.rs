@@ -79,7 +79,7 @@ use mockall::predicate::*;
 
 use crate::stack::{Stack, SimpleStack, EXPAND_UP};
 use crate::types::Address;
-use crate::pager::VirtualAddress;
+use crate::pager::{PhysicalAddress, VirtualAddress};
 
 use super::address_aggregator::{AddressAggregator, PageAggregator};
 use super::PAGE_SIZE_1GB;
@@ -111,7 +111,7 @@ pub trait PageMapper {
 //     - iterate the page tables to ensure that the page in question is of the corret size before freeing
 pub(crate) struct PageStack<const PAGE_SIZE: usize> 
 where [(); PAGE_SIZE * ADDRESSES_PER_PAGE]: {
-    pub(crate) available_pages: Stack<'static, Address, EXPAND_UP>,
+    pub(crate) available_pages: Stack<'static, PhysicalAddress, EXPAND_UP>,
     pub(crate) aggregate_map: PageAggregator< {PAGE_SIZE*ADDRESSES_PER_PAGE} >,
 }
 
@@ -119,16 +119,16 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE]: {
 impl<const PAGE_SIZE: usize> PageStack<PAGE_SIZE> 
 where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
-    pub fn new<I: Iterator< Item = Address> > (stack_base: Address, page_count: usize, aggregator_base: Address, pages: I) -> Self 
+    pub fn new<I: Iterator< Item = PhysicalAddress> > (stack_base: Address, page_count: usize, aggregator_base: Address, pages: I) -> Self
     where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
-        let mut available_pages = Stack::<Address, EXPAND_UP>::new(stack_base, page_count);
+        let mut available_pages = Stack::<PhysicalAddress, EXPAND_UP>::new(stack_base, page_count);
         let mut aggregate_map = PageAggregator::<{PAGE_SIZE * ADDRESSES_PER_PAGE}>::new(
                 aggregator_base,
                 (page_count + (ADDRESSES_PER_PAGE-1)) / ADDRESSES_PER_PAGE);
 
         for page in pages {
             available_pages.push(page);
-            aggregate_map.mark_available(page);
+            aggregate_map.mark_available(page.0);
         }
         PageStack {
             available_pages,
@@ -144,35 +144,35 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
         self.available_pages.top()
     }
 
-    pub fn give(&mut self, page: Address) -> Option<Address> {
+    pub fn give(&mut self, page: PhysicalAddress) -> Option<PhysicalAddress> {
         self.deallocate_helper(page, true)
     }
 
-    pub fn take(&mut self) -> Option<Address> {
+    pub fn take(&mut self) -> Option<PhysicalAddress> {
         self.allocate_helper(false)
     }
 
-    pub fn mark_allocated(&mut self, page_addr: Address) {
-        self.aggregate_map.mark_allocated(page_addr);
+    pub fn mark_allocated(&mut self, page_addr: PhysicalAddress) {
+        self.aggregate_map.mark_allocated(page_addr.0);
     }
 
-    pub fn allocate_page(&mut self) -> Option<Address>  {
+    pub fn allocate_page(&mut self) -> Option<PhysicalAddress>  {
         self.allocate_helper(true)
     }
 
-    pub fn deallocate_page(&mut self, page_addr: Address) -> Option<Address> {
+    pub fn deallocate_page(&mut self, page_addr: PhysicalAddress) -> Option<PhysicalAddress> {
         self.deallocate_helper(page_addr, false)
     }
 
-    fn allocate_helper(&mut self, track_page: bool) -> Option<Address> {
+    fn allocate_helper(&mut self, track_page: bool) -> Option<PhysicalAddress> {
         if self.available_pages.is_empty() {
             None
         } else {
             let page = self.available_pages.pop().unwrap();
             if track_page {
-                self.aggregate_map.allocate(page);
+                self.aggregate_map.allocate(page.0);
             } else {
-                self.aggregate_map.take(page);
+                self.aggregate_map.take(page.0);
             }
             Some(page)
         }
@@ -180,26 +180,26 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
     // NOTE: it is up to the caller to ensure this page has been previously allocated and is the 
     // proper size for this page stack.
-    fn deallocate_helper(&mut self, page_addr: Address, new_addr: bool) -> Option<Address>
+    fn deallocate_helper(&mut self, page_addr: PhysicalAddress, new_addr: bool) -> Option<PhysicalAddress>
     where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 
         // align the page address to the page size, just in case
-        let page_addr = page_addr & !(PAGE_SIZE as Address - 1);
+        let page_addr = PhysicalAddress(page_addr.0 & !(PAGE_SIZE as Address - 1));
 
         self.available_pages.push(page_addr);
 
         let mut result = None;
         if PAGE_SIZE != PAGE_SIZE_1GB {
             result = match new_addr {
-                true  => self.aggregate_map.mark_available(page_addr),
-                false => self.aggregate_map.deallocate(page_addr),
-            };
+                true  => self.aggregate_map.mark_available(page_addr.0),
+                false => self.aggregate_map.deallocate(page_addr.0),
+            }.map(PhysicalAddress);
 
             if let Some(bigger_page) = result {
                 let bigger_page_size = (PAGE_SIZE * ADDRESSES_PER_PAGE) as Address;
 
-                let is_within = |addr: Address| -> bool {
-                    addr >= bigger_page && addr < bigger_page + bigger_page_size
+                let is_within = |addr: PhysicalAddress| -> bool {
+                    addr.0 >= bigger_page.0 && addr.0 < bigger_page.0 + bigger_page_size
                 };
 
                 // we hvae all the pages which make up a larger page
@@ -250,6 +250,7 @@ where [(); PAGE_SIZE * ADDRESSES_PER_PAGE] : {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pager::PhysicalAddress;
     use std::vec;
     use std::vec::Vec;
     use std::collections::HashSet;
@@ -258,10 +259,10 @@ mod tests {
 
     #[test]
     fn test_create_stack() {
-        let address_stack = [0 as Address; 10];
+        let address_stack = [PhysicalAddress(0); 10];
         let address_aggregator = [PageBucket{allocated: 0, available: 0}; 4096];
 
-        let addresses = vec![ 0x3000 as Address, 0x4000, 0x5000 ];
+        let addresses = vec![PhysicalAddress(0x3000), PhysicalAddress(0x4000), PhysicalAddress(0x5000)];
 
         let _ps = PageStack::<4096>::new(
             address_stack.as_ptr() as Address,
@@ -269,23 +270,23 @@ mod tests {
             address_aggregator.as_ptr() as Address,
             addresses.iter().copied());
 
-        assert_eq!(address_stack[0], 0x3000);
-        assert_eq!(address_stack[1], 0x4000);
-        assert_eq!(address_stack[2], 0x5000);
+        assert_eq!(address_stack[0], PhysicalAddress(0x3000));
+        assert_eq!(address_stack[1], PhysicalAddress(0x4000));
+        assert_eq!(address_stack[2], PhysicalAddress(0x5000));
         assert_eq!(address_aggregator[0].available, 3);
     }
 
     #[test]
     fn test_allocate_page() {
-        let address_stack = [0 as Address; 10];
+        let address_stack = [PhysicalAddress(0); 10];
         let address_aggregator = [PageBucket{allocated: 0, available: 0}; 4096];
 
-        let address1 = 0x1234000 as Address;
-        let address2 = 0x5678000 as Address;
+        let address1 = PhysicalAddress(0x1234000);
+        let address2 = PhysicalAddress(0x5678000);
 
         let addresses = vec![ address1, address2 ];
 
-        let max_pages = address2 as usize / 4096;
+        let max_pages = address2.0 as usize / 4096;
 
         let mut ps = PageStack::<4096>::new(
             address_stack.as_ptr() as Address, 
@@ -300,15 +301,15 @@ mod tests {
 
     #[test]
     fn test_deallocate_page() {
-        let address_stack = [0 as Address; 10];
+        let address_stack = [PhysicalAddress(0); 10];
         let mut address_aggregator = [PageBucket{allocated: 0, available: 0}; 4096];
 
         let addresses = vec![ ];
 
-        let address1 = 0x1234000 as Address;
-        let address2 = 0x5678000 as Address;
+        let address1 = PhysicalAddress(0x1234000);
+        let address2 = PhysicalAddress(0x5678000);
 
-        let max_pages = address2 as usize / 4096;
+        let max_pages = address2.0 as usize / 4096;
 
         let mut ps = PageStack::<4096>::new(
             address_stack.as_ptr() as Address, 
@@ -316,34 +317,34 @@ mod tests {
             address_aggregator.as_ptr() as Address,
             addresses.iter().copied());
 
-        address_aggregator[address1 as usize / PAGE_SIZE_2MB].allocated = 5;
-        address_aggregator[address2 as usize / PAGE_SIZE_2MB].allocated = 10;
+        address_aggregator[address1.0 as usize / PAGE_SIZE_2MB].allocated = 5;
+        address_aggregator[address2.0 as usize / PAGE_SIZE_2MB].allocated = 10;
 
         assert_eq!(ps.deallocate_page(address1), None);
         assert_eq!(ps.deallocate_page(address2), None);
 
-        assert_eq!(address_stack[0], 0x1234000);
-        assert_eq!(address_stack[1], 0x5678000);
-        assert_eq!(address_aggregator[address1 as usize / PAGE_SIZE_2MB].allocated, 4);
-        assert_eq!(address_aggregator[address1 as usize / PAGE_SIZE_2MB].available, 1);
-        assert_eq!(address_aggregator[address2 as usize / PAGE_SIZE_2MB].allocated, 9);
-        assert_eq!(address_aggregator[address2 as usize / PAGE_SIZE_2MB].available, 1);
+        assert_eq!(address_stack[0], address1);
+        assert_eq!(address_stack[1], address2);
+        assert_eq!(address_aggregator[address1.0 as usize / PAGE_SIZE_2MB].allocated, 4);
+        assert_eq!(address_aggregator[address1.0 as usize / PAGE_SIZE_2MB].available, 1);
+        assert_eq!(address_aggregator[address2.0 as usize / PAGE_SIZE_2MB].allocated, 9);
+        assert_eq!(address_aggregator[address2.0 as usize / PAGE_SIZE_2MB].available, 1);
     }
     
     // test that returning/deallocating all pages back to the stack results in them being 
     // aggregated back to a larger page
     #[test]
     fn test_deallocation_aggregation() {
-        let address_stack = [0 as Address; 512]; // just enough space to hold them all
+        let address_stack = [PhysicalAddress(0); 512]; // just enough space to hold them all
         let mut address_aggregator = [PageBucket{allocated: 0, available: 0}; 4096];
 
         // Start off with all 4kb addresses which comprise the 2mb page from 10MB to 2MB
         // i.e., the 5th 2mb page (first being the 0th)
-        let mut addresses = Vec::<Address>::new();
+        let mut addresses = Vec::<PhysicalAddress>::new();
         let base_address = (PAGE_SIZE_2MB*5) as Address;
-        let top_of_stack = base_address + (PAGE_SIZE_2MB - PAGE_SIZE_4KB) as Address;
+        let top_of_stack = PhysicalAddress(base_address + (PAGE_SIZE_2MB - PAGE_SIZE_4KB) as Address);
         for i in (0..PAGE_SIZE_2MB).step_by(PAGE_SIZE_4KB) {
-            addresses.push(base_address + i as Address)
+            addresses.push(PhysicalAddress(base_address + i as Address))
         }
         // no sense continuing if this isn't true...
         assert_eq!(addresses.len(), ADDRESSES_PER_PAGE);
@@ -361,32 +362,32 @@ mod tests {
         let _ = address_aggregator[base_address as usize / PAGE_SIZE_2MB].available;
 
         // we expect the stack to be constructed with all the addresses...
-        assert_eq!(address_stack[0], base_address);
+        assert_eq!(address_stack[0], PhysicalAddress(base_address));
         assert_eq!(address_stack[511], top_of_stack);
         assert_eq!(ps.len(), ADDRESSES_PER_PAGE);
 
         // now if we allocate a page, and return it back (deallocate it) the stack should realize it has 
         // enough pages to aggregate into a single 2mb page, and should tell us that...
         assert_eq!(ps.allocate_page(), Some(top_of_stack));
-        assert_eq!(ps.deallocate_page(top_of_stack), Some(base_address));
+        assert_eq!(ps.deallocate_page(top_of_stack), Some(PhysicalAddress(base_address)));
         assert_eq!(ps.len(), 0);
     }
 
     // test that the stack has all pages removed that belong to the aggregated page
     #[test]
     fn test_deallocation_aggregation_stack_cleanup() {
-        let address_stack = [0 as Address; 1024]; // just enough space to hold them all
+        let address_stack = [PhysicalAddress(0); 1024]; // just enough space to hold them all
         let mut address_aggregator = [PageBucket{allocated: 0, available: 0}; 4096];
 
         // intersperse 4kb pages belonging to two different 2mb pages
-        let mut addresses = Vec::<Address>::new();
+        let mut addresses = Vec::<PhysicalAddress>::new();
         let base_address_aggregate_page = (PAGE_SIZE_2MB*5) as Address;
         let base_address_other_page = (PAGE_SIZE_2MB*2) as Address;
-        let top_of_stack = base_address_aggregate_page + (PAGE_SIZE_2MB - PAGE_SIZE_4KB) as Address;
+        let top_of_stack = PhysicalAddress(base_address_aggregate_page + (PAGE_SIZE_2MB - PAGE_SIZE_4KB) as Address);
 
         for i in 0..512 {
-            addresses.push(base_address_other_page + (i* PAGE_SIZE_4KB) as Address);
-            addresses.push(base_address_aggregate_page + (i * PAGE_SIZE_4KB) as Address);
+            addresses.push(PhysicalAddress(base_address_other_page + (i* PAGE_SIZE_4KB) as Address));
+            addresses.push(PhysicalAddress(base_address_aggregate_page + (i * PAGE_SIZE_4KB) as Address));
         }
 
         // no sense continuing if this isn't true...
@@ -412,7 +413,7 @@ mod tests {
         // now if we allocate a page, and return it back (deallocate it) the stack should realize it has 
         // enough pages to aggregate into a single 2mb page, and should tell us that...
         assert_eq!(ps.allocate_page(), Some(top_of_stack));
-        assert_eq!(ps.deallocate_page(top_of_stack), Some(base_address_aggregate_page));
+        assert_eq!(ps.deallocate_page(top_of_stack), Some(PhysicalAddress(base_address_aggregate_page)));
         assert_eq!(ps.len(), 512);
 
         // Now allocate pages and ensure they're all within range of the un-aggregated 
@@ -420,7 +421,7 @@ mod tests {
         let mut address_set = HashSet::new();
         while ps.len() > 0 {
             if let Some(page) = ps.allocate_page() {
-                address_set.insert(page);
+                address_set.insert(page.0);
             } else {
                 assert!(false);
             }
