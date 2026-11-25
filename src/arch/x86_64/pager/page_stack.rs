@@ -1,17 +1,17 @@
 //! Page Stack
 //!
-//! A structure for managing allocation/freeing of varoius different page sizes.
+//! A structure for managing allocation/freeing of various different page sizes.
 //!
 //! == Overview ==
 //!
 //! Implements a page management structure for each of the different page sizes, whereby 
-//! smaller page sizes can borrow a page from a larger allocater if/when it runs out.
+//! smaller page sizes can borrow a page from a larger allocator if/when it runs out.
 //!
 //! An example of the relationship appears below, whereby the 2mb stack was previously 
-//! empty, so it "borrowed" a page from the next allocater up in size (the 1gb allocated) 
+//! empty, so it "borrowed" a page from the next allocator up in size (the 1gb allocated) 
 //! which allocated a 1gb page, and distributed it as 512 2mb pages to the 2mb allocator.
 //!
-//! In this example, the 4kb allocater has a few pages allocated, likely to form page 
+//! In this example, the 4kb allocator has a few pages allocated, likely to form page 
 //! tables, and is otherwise empty.  If someone were to request a 4kb page, the allocator 
 //! would need to borrow a page from the 2mb allocator and, in return, would acquire 512 
 //! 4kb pages.
@@ -58,7 +58,7 @@
 //! Instead of using an allocated stack, have an array indexes by the next largest page size.
 //! The array contains the count of pages allocated/freed from that largest page size.
 //!
-//! 4kb page insdex == page / 2mb  == 512GB / 2MB == 262144 possible indexes
+//! 4kb page index == page / 2mb  == 512GB / 2MB == 262144 possible indexes
 //!    array contains:
 //!      u16 count of 4kb pages allocated from each 2mb page
 //!      u16 count of 4kb pages available from each 2mb page
@@ -91,6 +91,7 @@ enum Search {
     Match(usize),
 }
 
+// TODO: extract this into separate file (and also harmonize with the other ensure_mapped[_range] functions)
 #[allow(dead_code)]
 #[cfg_attr(test, automock)]
 pub trait PageMapper {
