@@ -42,272 +42,34 @@ pub mod page_stack;
 pub mod page_iterator;
 pub mod address_aggregator;
 
+mod constants;
+pub use self::constants::{
+    PAGE_MASK_1GB, PAGE_MASK_2MB, PAGE_MASK_4KB, PAGE_OFFSET_MASK_1GB,
+    PAGE_OFFSET_MASK_2MB, PAGE_OFFSET_MASK_4KB, PAGE_SIZE_1GB, PAGE_SIZE_2MB,
+    PAGE_SIZE_4KB, PAGER_MAX_SUPPORTED_MEMORY,
+};
+pub(crate) use self::constants::PHYSICAL_OFFSET;
+use self::constants::{
+    PAGE_AGGREGATOR_1GB_BASE, PAGE_AGGREGATOR_2MB_BASE, PAGE_AGGREGATOR_512GB_BASE,
+    PAGE_STACK_1GB_BASE, PAGE_STACK_1GB_MAX_PAGES, PAGE_STACK_2MB_BASE,
+    PAGE_STACK_2MB_MAX_PAGES, PAGE_STACK_4KB_BASE, PAGE_STACK_4KB_MAX_PAGES,
+};
+
+mod page_type;
+pub use self::page_type::PageType;
+mod sized_page;
+pub use self::sized_page::SizedPage;
+
+mod util;
+pub use self::util::{
+    get_kernel_cr3, get_pl4_table, get_entry, invalidate_page, is_1gb_aligned,
+    is_2mb_aligned, is_4kb_aligned, next_1gb_page, next_2mb_page,
+    next_4kb_page, pages_required, physical_mirror, set_mmio,
+};
+use self::util::entry_to_table;
+
+mod run_time_tests;
+pub use self::run_time_tests::run_time_tests;
+
 mod pager;
 pub use self::pager::Pager;
-
-use x86_64::registers::control::Cr3;
-use x86_64::structures::paging::PageTable;
-use x86_64::structures::paging::PageTableFlags;
-use x86_64::structures::paging::page_table::PageTableEntry;
-use crate::pager::{PhysicalAddress, VirtualAddress};
-use crate::types::Address;
-use super::X86_PAGER;
-
-pub const PAGER_MAX_SUPPORTED_MEMORY: usize = 512*1024*1024*1024; // 512GB
-
-pub const PAGE_SIZE_4KB: usize = 4*1024;
-pub const PAGE_SIZE_2MB: usize = 2*1024*1024;
-pub const PAGE_SIZE_1GB: usize = 1*1024*1024*1024;
-
-pub const PAGE_OFFSET_MASK_4KB: Address = 4*1024-1;
-pub const PAGE_OFFSET_MASK_2MB: Address = 2*1024*1024-1;
-pub const PAGE_OFFSET_MASK_1GB: Address = 1*1024*1024*1024-1;
-
-pub const PAGE_MASK_4KB: Address = !PAGE_OFFSET_MASK_4KB;
-pub const PAGE_MASK_2MB: Address = !PAGE_OFFSET_MASK_2MB;
-pub const PAGE_MASK_1GB: Address = !PAGE_OFFSET_MASK_1GB;
-
-pub(crate) const PHYSICAL_OFFSET: Address = 0xFFFFFF0000000000;
-
-const PAGE_STACK_4KB_BASE: Address = 0xFFFFFFD000000000;
-const PAGE_STACK_2MB_BASE: Address = 0xFFFFFFE000000000;
-const PAGE_STACK_1GB_BASE: Address = 0xFFFFFFE000201000;
-
-const PAGE_STACK_4KB_MAX_PAGES: usize = 134217728;
-const PAGE_STACK_2MB_MAX_PAGES: usize = 262144;
-const PAGE_STACK_1GB_MAX_PAGES: usize = 512;
-
-const PAGE_AGGREGATOR_2MB_BASE: Address = 0xFFFFFFD040000000;
-const PAGE_AGGREGATOR_1GB_BASE: Address = 0xFFFFFFE000200000;
-const PAGE_AGGREGATOR_512GB_BASE: Address = 0xFFFFFFE000202000;
-
-#[derive(PartialEq, Copy, Clone)]
-pub enum PageType {
-    Page4KB,
-    Page2MB,
-    Page1GB,
-}
-
-#[allow(dead_code)]
-#[derive(PartialEq, Copy, Clone)]
-pub enum SizedPage {
-    Page4KB(Address),
-    Page2MB(Address),
-    Page1GB(Address),
-}
-
-
-pub fn physical_mirror<T>(addr: T) -> T where T: Into<Address> + From<Address> {
-    let addr = addr.into();
-    let mirrored = addr + PHYSICAL_OFFSET;
-    mirrored.into()
-}
-
-pub fn pages_required(size: usize) -> usize {
-    (size + (PAGE_SIZE_4KB - 1)) / PAGE_SIZE_4KB
-}
-
-pub fn get_pl4_table() -> &'static mut PageTable {
-    unsafe {
-        let (pl4_frame, _flags) = Cr3::read();
-        &mut *(physical_mirror(pl4_frame.start_address().as_u64()) as *mut PageTable)
-    }
-}
-
-pub fn invalidate_page(addr: VirtualAddress) {
-    unsafe {
-        core::arch::asm!(
-            "invlpg 0({0:r})",
-            in(reg) addr.0,
-            options(nostack, preserves_flags, att_syntax)
-        );
-    }
-}
-
-pub fn set_mmio(virtual_addr: VirtualAddress) -> bool {
-    if let Some(entry) = get_entry(virtual_addr) {
-    
-        let new_flags = entry.flags() | (
-            PageTableFlags::WRITE_THROUGH & 
-            PageTableFlags::NO_CACHE);
-
-        entry.set_flags(new_flags);
-
-        invalidate_page(virtual_addr);
-        return true;
-    }
-    return false;
-}
-
-pub fn get_entry(virtual_addr: VirtualAddress) -> Option<&'static mut PageTableEntry> {
-    let pl4_index = (virtual_addr.0 as usize >> 39) & 0o777;
-    let pl3_index = (virtual_addr.0 as usize >> 30) & 0o777;
-    let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
-    let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
-
-        let pl4_table = get_pl4_table();
-
-        let pl4_entry = &mut pl4_table[pl4_index];
-        if pl4_entry.is_unused() {
-            return None;
-        }
-
-        // page directory entry is 4kb page...
-        let pl3_table = entry_to_table(&pl4_entry);
-        let pl3_entry = &mut pl3_table[pl3_index];
-        if pl3_entry.is_unused() {
-            return None;
-        }
-
-        if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
-            return Some(pl3_entry);
-        }
-
-        // this could be a 2mb page...
-        let pl2_table = entry_to_table(&pl3_entry);
-        let pl2_entry = &mut pl2_table[pl2_index];
-        if pl2_entry.is_unused() {
-            return None;
-        }
-
-        if pl2_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
-            return Some(pl2_entry);
-        }
-
-        let pl1_table = entry_to_table(&pl2_entry);
-        let pl1_entry = &mut pl1_table[pl1_index];
-        if pl1_entry.is_unused() {
-            return None;
-        }
-
-        Some(pl1_entry)
-}
-
-
-fn entry_to_table(entry: &PageTableEntry) -> &'static mut PageTable {
-    unsafe {
-        &mut *(physical_mirror(entry.addr().as_u64()) as *mut PageTable)
-    }
-}
-
-pub fn is_1gb_aligned(addr: Address) -> bool {
-    addr & PAGE_OFFSET_MASK_1GB == 0
-}
-
-pub fn is_2mb_aligned(addr: Address) -> bool {
-    addr & PAGE_OFFSET_MASK_2MB == 0
-}
-
-pub fn is_4kb_aligned(addr: Address) -> bool {
-    addr & PAGE_OFFSET_MASK_4KB == 0
-}
-
-pub fn next_1gb_page(addr: Address) -> Address {
-    (addr + PAGE_SIZE_1GB as Address) & PAGE_MASK_1GB
-}
-
-pub fn next_2mb_page(addr: Address) -> Address {
-    (addr + PAGE_SIZE_2MB as Address) & PAGE_MASK_2MB
-}
-
-pub fn next_4kb_page(addr: Address) -> Address {
-    (addr + PAGE_SIZE_4KB as Address) & PAGE_MASK_4KB
-}
-
-
-
-pub fn run_time_tests(pager: &Pager) {
-    // First test that the physical "itentity mapped" region exists at PHYSICAL_OFFSET
-    let page = pager.allocate_page(PageType::Page4KB).expect("Must be able to acquire 4kb page");
-    println!("Allocated page at 0x{:016x}", page.0);
-    unsafe { core::ptr::write_bytes(physical_mirror(page.0) as *mut u8, 0xff, 4096); }
-
-    let phys_test_addr = (page.0 + PHYSICAL_OFFSET) as *const u8;
-    let phys_test_array: &[u8; 4096] = unsafe {
-        &*(phys_test_addr as *const [u8; 4096])
-    };
-    assert_eq!(phys_test_array[0], 0xff);
-
-    unsafe { core::ptr::write_bytes(physical_mirror(page.0) as *mut u8, 0x80, 4096); }
-    assert_eq!(phys_test_array[0], 0x80);
-
-    pager.free_page(PageType::Page4KB, page);
-
-    // Next test that we can allocate all available memory as 4kb pages
-    // And that once we free all the pages, they're aggregated back into their original 2mb and 1gb 
-    // pages where relevant.
-    // This will require using the allocated memory as a linked list, so they the pages can be fully 
-    // freed once allocated
-    let mut first_page: Option<Address> = None;
-    let mut last_page: Address = 0;
-    let mut count = 0;
-    while let Some(page) = pager.allocate_4kb_page() {
-        let page = page.0 + PHYSICAL_OFFSET;
-
-        println!("Allocated 0x{:016x}", page);
-        count += 1;
-
-        if first_page == None {
-            first_page = Some(page);
-        } else {
-            unsafe {
-                // I technically *don't* need to add physical offset here, as the memory is still identity 
-                // mapped in place, as well... but dereferencing address 0 will cause a panic... even though 
-                // address 0 is actually mapped and valid...
-                let last_page_ptr = last_page as *mut u64;
-                *last_page_ptr = page;
-            }
-        }
-        last_page = page;
-
-        //yield_task();
-    }
-
-    println!("Allocated all pages; now freeing starting at {}", first_page.unwrap_or(0));
-
-
-    // trace out the pages for debug...
-    /*
-    if let Some(mut address) = first_page {
-        for _ in 0..count {
-            println!("Addr 0x{:016x}", address);
-            if address & (4096-1) != 0 {
-                breakpoint();
-            }
-            // extract the next address before we free this page
-            let next_page = unsafe {
-                let next_page_ptr = address as *mut u64;
-                *next_page_ptr
-            };
-            address = next_page;
-        }
-    }
-    */
-
-    // Now free them all back...
-    if let Some(mut address) = first_page {
-        for _ in 0..count {
-            println!("Freeing 0x{:016x}", address);
-            // extract the next address before we free this page
-            let next_page = unsafe {
-                let next_page_ptr = address as *mut u64;
-                *next_page_ptr
-            };
-            pager.free_4kb_page(PhysicalAddress(address - PHYSICAL_OFFSET));
-            address = next_page;
-        }
-    }
-}
-
-
-#[allow(dead_code)]
-fn breakpoint() {
-    println!("Artificial breakpoint");
-    loop {
-        x86_64::instructions::hlt();
-    }
-}
-
-pub fn get_kernel_cr3() -> u64 {
-    X86_PAGER.get().unwrap().get_kernel_cr3()
-}
