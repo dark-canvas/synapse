@@ -2,7 +2,7 @@ use core::arch::asm;
 
 use x86_64::structures::paging::PageTableFlags;
 
-use crate::{arch::x86_64::{X86_PAGER, gdt::{RING_3_CODE_SELECTOR, RING_3_DATA_SELECTOR}, pager::PageType, smp}, pager::{PhysicalAddress, VirtualAddress}};
+use crate::{arch::x86_64::{X86_PAGER, gdt::{RING_3_CODE_SELECTOR, RING_3_DATA_SELECTOR}, pager::PageType, smp}, pager::VirtualAddress};
 
 // STAR = system target address register
 
@@ -162,7 +162,7 @@ pub fn init() {
     
     let page = pager.allocate_4kb_page().unwrap();
     pager.map_physical_to_virtual(
-        PhysicalAddress(page), 
+        page,
         VirtualAddress(target_address), 
         PageType::Page4KB, 
         PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE).unwrap();

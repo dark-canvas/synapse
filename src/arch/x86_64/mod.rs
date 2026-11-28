@@ -1,7 +1,7 @@
 // TODO: this should all be private...
 mod gdt;
 mod global_data;
-mod idt;
+mod interrupts;
 pub mod pager;
 mod pit;
 mod scheduler;
@@ -18,12 +18,13 @@ use crate::arch::x86_64::syscall::syscall_test_task;
 use crate::arch::x86_64::syscall::perform_syscall_test;
 use crate::arch::x86_64::x2apic::timer::timer_init;
 use crate::pager::PAGER;
+use crate::pager::Pager as _;
+use crate::pager::VirtualAddress;
 
 use satus_struct::config::Config;
 use self::pager::Pager;
 use self::scheduler::Scheduler;
 use self::smp::{CpuState, State};
-use x86_64::instructions::interrupts;
 use spin::Once;
 use crate::types::CpuId;
 use self::scheduler::TaskMap;
@@ -47,7 +48,7 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
     let is_bsp = cpu_id == 0;
 
     gdt::init(cpu_id); // setups up the TSS, so needs to be initialized before scheduler and interrupts
-    idt::init_idt();   // sets up all the execption handlers, so should be done early
+    interrupts::init_idt();   // sets up all the execption handlers, so should be done early
 
     // pager needs to be one of the first things created as nearly anything which requires any 
     // of the following will require it:
@@ -91,7 +92,14 @@ pub fn init_core(cpu_id: CpuId, config: &Config) {
     // create a task struction
     // add it to the scheduler
 
+    cpu_state.state = State::Initialized;
+    cpu_state.wait_for_others();
+
     if is_bsp {
+        let cpu_config = cpu_state.get_bootloader_config().get_cpu_config();
+        X86_PAGER.get().unwrap().free_virtual(
+            1, VirtualAddress(cpu_config.trampoline_address)).unwrap();
+
         // TODO: these each need to have separate stacks!!
         // as a test, create another task and yield to it, then yield back to the kernel task
         cpu_state.scheduler.new_task(||

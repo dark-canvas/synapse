@@ -12,7 +12,7 @@ use crate::arch::x86_64::pager::PHYSICAL_OFFSET;
 use crate::arch::x86_64::pager::set_mmio;
 use crate::arch::x86_64::pit::timer_delay;
 use crate::arch::x86_64::X86_PAGER;
-use crate::pager::PhysicalAddress;
+use crate::pager::{Pager, PhysicalAddress};
 use crate::pager::VirtualAddress;
 use crate::arch::x86_64::pager::PageType;
 use crate::arch::x86_64::util::registers::get_cr3;
@@ -117,6 +117,7 @@ pub fn init(config: &Config) {
         kernel_ap_entry,
     );
 
+    // TODO: move this into the trampoline struct itself?
     // And identity map it (it must be within the 1st MB such that it's reachable in 16-bit real mode)
     let _ = X86_PAGER.get().unwrap().map_physical_to_virtual(
         PhysicalAddress(cpu_config.trampoline_address),
@@ -204,6 +205,8 @@ pub fn init(config: &Config) {
         }
     }
 
+    bspCpuState.wait_for_others();
+    /* 
     let num_cpus = cpu_config.get_num_cpus();
     let mut num_aps_up = 0;
     while num_aps_up != num_cpus {
@@ -218,6 +221,14 @@ pub fn init(config: &Config) {
         }
         core::hint::spin_loop();
     }
+    */
+
+    // unmap the trampoline's virtual address, and free the underlying physical page
+    // separate calls to unmap_page() and free_4kb_page()?
+    // TODO: we must assert that x2apic::init() has completed on the CPUs
+    //X86_PAGER.get().unwrap().free_virtual(
+    //    1, VirtualAddress(cpu_config.trampoline_address)).unwrap();
+    // TODO: remove the stale/empty page tables!
 
     SMP_INITIALIZED.store(true, Ordering::Relaxed);
 }

@@ -54,12 +54,32 @@ impl CpuState {
         unsafe { &mut *(base_address as *mut CpuState) }
     }
 
+    pub fn wait_for_others(&self) {
+        let num_cpus = self.get_num_cpus();
+        let mut matched = 0;
+        while matched != num_cpus {
+            matched = 0;
+            for cpu in 0..num_cpus {
+                let cpu_state = CpuState::get(cpu.try_into().unwrap());
+
+                if cpu_state.state == self.state {
+                    matched += 1;
+                }
+            }
+            core::hint::spin_loop();
+        }
+    }
+
     pub fn get_cpu_id(&self) -> CpuId {
         self.apic_id as CpuId
     }
 
     pub fn get_bootloader_config(&self) -> Config {
         Config::from_page(self.config)
+    }
+
+    pub fn get_num_cpus(&self) -> usize {
+        self.get_bootloader_config().get_cpu_config().get_num_cpus() as usize
     }
 }
 

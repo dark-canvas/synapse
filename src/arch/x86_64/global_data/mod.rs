@@ -1,3 +1,4 @@
+use crate::arch::x86_64::pager::InvalidatePageRequest;
 use crate::pager::Pager;
 use crate::pager::VirtualAddress;
 
@@ -9,6 +10,7 @@ const KERNEL_GLOBAL_DATA_BASE: VirtualAddress = VirtualAddress(0xFFFFFF900000000
 
 pub struct GlobalData<'a> {
     pub task_map: CpuMutex< TaskMap<&'a dyn Pager> >,
+    pub invalidate_page_request: InvalidatePageRequest,
 }
 
 impl<'a> GlobalData<'a> {
