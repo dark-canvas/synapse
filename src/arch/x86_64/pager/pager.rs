@@ -4,6 +4,7 @@ use core::fmt::Write;
 use spin::Mutex;
 
 use x86_64::registers::control::Cr3;
+use x86_64::structures::paging::page_table::PageTableEntry;
 use x86_64::structures::paging::{PageTable, PageTableFlags, PhysFrame, Size4KiB};
 use x86_64::PhysAddr;
 
@@ -11,6 +12,7 @@ use satus_struct::config::Config;
 use satus_struct::memory_map::{MemoryMap, MemoryRegionType};
 use satus_struct::module_list::ModuleList;
 
+use crate::arch::x86_64::pager::invalidate_page_smp;
 use crate::errors::ErrCode;
 use crate::logger::{
     FrameBufferLogger, LOG_AGGREGATE_1GB, LOG_AGGREGATE_2MB, LOG_ALLOC_4KB,
@@ -394,6 +396,13 @@ impl Pager {
         }
     }
 
+    fn give_4kb_page(&self, address: PhysicalAddress) {
+        let mut stack_4kb = self.stack_4kb.lock();
+        if let Some(agg_addr) = stack_4kb.0.give(address) {
+            self.give_2mb_page(agg_addr);
+        }
+    }
+
     fn take_1gb_page(&self) -> Option<PhysicalAddress> {
         self.stack_1gb.lock().0.take()
     }
@@ -507,42 +516,42 @@ impl Pager {
         let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
         let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
 
-            let pl4_table = get_pl4_table();
+        let pl4_table = get_pl4_table();
 
-            let pl4_entry = &pl4_table[pl4_index];
-            if pl4_entry.is_unused() {
-                return None;
-            }
+        let pl4_entry = &pl4_table[pl4_index];
+        if pl4_entry.is_unused() {
+            return None;
+        }
 
-            // page directory entry is 4kb page...
-            let pl3_table = entry_to_table(&pl4_entry);
-            let pl3_entry = &pl3_table[pl3_index];
-            if pl3_entry.is_unused() {
-                return None;
-            }
+        // page directory entry is 4kb page...
+        let pl3_table = entry_to_table(&pl4_entry);
+        let pl3_entry = &pl3_table[pl3_index];
+        if pl3_entry.is_unused() {
+            return None;
+        }
 
-            if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
-                return Some(PhysicalAddress(pl3_entry.addr().as_u64() + (virtual_addr.0 & 0x3FFFFFFF)));
-            }
+        if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
+            return Some(PhysicalAddress(pl3_entry.addr().as_u64() + (virtual_addr.0 & 0x3FFFFFFF)));
+        }
 
-            // this could be a 2mb page...
-            let pl2_table = entry_to_table(&pl3_entry);
-            let pl2_entry = &pl2_table[pl2_index];
-            if pl2_entry.is_unused() {
-                return None;
-            }
+        // this could be a 2mb page...
+        let pl2_table = entry_to_table(&pl3_entry);
+        let pl2_entry = &pl2_table[pl2_index];
+        if pl2_entry.is_unused() {
+            return None;
+        }
 
-            if pl2_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
-                return Some(PhysicalAddress(pl2_entry.addr().as_u64() + (virtual_addr.0 & 0x1FFFFF)));
-            }
+        if pl2_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
+            return Some(PhysicalAddress(pl2_entry.addr().as_u64() + (virtual_addr.0 & 0x1FFFFF)));
+        }
 
-            let pl1_table = entry_to_table(&pl2_entry);
-            let pl1_entry = &pl1_table[pl1_index];
-            if pl1_entry.is_unused() {
-                return None;
-            }
+        let pl1_table = entry_to_table(&pl2_entry);
+        let pl1_entry = &pl1_table[pl1_index];
+        if pl1_entry.is_unused() {
+            return None;
+        }
 
-            Some(PhysicalAddress(pl1_entry.addr().as_u64() + (virtual_addr.0 & 0xFFF)))
+        Some(PhysicalAddress(pl1_entry.addr().as_u64() + (virtual_addr.0 & 0xFFF)))
     }
 
     pub fn map_physical_to_virtual(
@@ -641,57 +650,57 @@ impl Pager {
         let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
         let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
         
-            let pl4_entry = &mut pl4_table[pl4_index];
-            if pl4_entry.is_unused() {
-                let new_frame = self.allocate_page_table().ok_or("Couldn't create page table")?;
-                pl4_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
-            }
+        let pl4_entry = &mut pl4_table[pl4_index];
+        if pl4_entry.is_unused() {
+            let new_frame = self.allocate_page_table().ok_or("Couldn't create page table")?;
+            pl4_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+        }
 
-            let pl3_table = entry_to_table(&pl4_entry);
-            let pl3_entry = &mut pl3_table[pl3_index];
-            if pl3_entry.is_unused() {
-                if page_type == PageType::Page1GB {
-                    pl3_entry.set_addr(PhysAddr::new(self.allocate_1gb_page().ok_or("Couldn't allocate 1GB page")?.0),
-                    flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
-                    return Ok(true);
-                }
-                let new_frame = self.allocate_page_table().ok_or("Couldn't create page table")?;
-                pl3_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
-            } else if page_type == PageType::Page1GB {
-                if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
-                    return Ok(false)
-                } else {
-                    return Err("Virtual address already mapped with a smaller page size");
-                }
+        let pl3_table = entry_to_table(&pl4_entry);
+        let pl3_entry = &mut pl3_table[pl3_index];
+        if pl3_entry.is_unused() {
+            if page_type == PageType::Page1GB {
+                pl3_entry.set_addr(PhysAddr::new(self.allocate_1gb_page().ok_or("Couldn't allocate 1GB page")?.0),
+                flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
+                return Ok(true);
             }
-
-            let pl2_table = entry_to_table(&pl3_entry);
-            let pl2_entry = &mut pl2_table[pl2_index];
-            if pl2_entry.is_unused() {
-                if page_type == PageType::Page2MB {
-                    pl2_entry.set_addr(PhysAddr::new(self.allocate_2mb_page().ok_or("Couldn't allocate 2MB page")?.0),
-                    flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
-                    return Ok(true);
-                }
-                let new_frame = self.allocate_page_table().ok_or("Couldn't create page table")?;
-                pl2_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
-            } else if page_type == PageType::Page2MB {
-                if pl2_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
-                    return Ok(false)
-                } else {
-                    return Err("Virtual address already mapped with a smaller page size");
-                }
-            }
-
-            let pl1_table = entry_to_table(&pl2_entry);
-            let pl1_entry = &mut pl1_table[pl1_index];
-            if !pl1_entry.is_unused() {
+            let new_frame = self.allocate_page_table().ok_or("Couldn't create page table")?;
+            pl3_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+        } else if page_type == PageType::Page1GB {
+            if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
                 return Ok(false)
+            } else {
+                return Err("Virtual address already mapped with a smaller page size");
             }
+        }
 
-            pl1_entry.set_addr(PhysAddr::new(self.allocate_4kb_page().ok_or("Couldn't allocate 4KB page")?.0), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+        let pl2_table = entry_to_table(&pl3_entry);
+        let pl2_entry = &mut pl2_table[pl2_index];
+        if pl2_entry.is_unused() {
+            if page_type == PageType::Page2MB {
+                pl2_entry.set_addr(PhysAddr::new(self.allocate_2mb_page().ok_or("Couldn't allocate 2MB page")?.0),
+                flags | x86_64::structures::paging::PageTableFlags::PRESENT | x86_64::structures::paging::PageTableFlags::HUGE_PAGE);
+                return Ok(true);
+            }
+            let new_frame = self.allocate_page_table().ok_or("Couldn't create page table")?;
+            pl2_entry.set_addr(new_frame.start_address(), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+        } else if page_type == PageType::Page2MB {
+            if pl2_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
+                return Ok(false)
+            } else {
+                return Err("Virtual address already mapped with a smaller page size");
+            }
+        }
 
-            Ok(true)
+        let pl1_table = entry_to_table(&pl2_entry);
+        let pl1_entry = &mut pl1_table[pl1_index];
+        if !pl1_entry.is_unused() {
+            return Ok(false)
+        }
+
+        pl1_entry.set_addr(PhysAddr::new(self.allocate_4kb_page().ok_or("Couldn't allocate 4KB page")?.0), flags | x86_64::structures::paging::PageTableFlags::PRESENT);
+
+        Ok(true)
     }
 
     fn is_mapped(&self, virtual_addr: VirtualAddress) -> bool {
@@ -731,6 +740,49 @@ impl Pager {
         return true;
     }
 
+    fn get_page_entry(&self, virtual_addr: VirtualAddress) -> Option<&'static mut PageTableEntry> {
+        let pl4_index = (virtual_addr.0 as usize >> 39) & 0o777;
+        let pl3_index = (virtual_addr.0 as usize >> 30) & 0o777;
+        let pl2_index = (virtual_addr.0 as usize >> 21) & 0o777;
+        let pl1_index = (virtual_addr.0 as usize >> 12) & 0o777;
+
+        let pl4_table = get_pl4_table();
+
+        let pl4_entry = &pl4_table[pl4_index];
+        if pl4_entry.is_unused() {
+            return None;
+        }
+
+        // page directory entry is 4kb page...
+        let pl3_table = entry_to_table(&pl4_entry);
+        let pl3_entry = &mut pl3_table[pl3_index];
+        if pl3_entry.is_unused() {
+            return None;
+        }
+
+        if pl3_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
+            return Some(pl3_entry);
+        }
+
+        // this could be a 2mb page...
+        let pl2_table = entry_to_table(&pl3_entry);
+        let pl2_entry = &mut pl2_table[pl2_index];
+        if pl2_entry.is_unused() {
+            return None;
+        }
+
+        if pl2_entry.flags().contains(x86_64::structures::paging::PageTableFlags::HUGE_PAGE) {
+            return Some(pl2_entry);
+        }
+
+        let pl1_table = entry_to_table(&pl2_entry);
+        let pl1_entry = &mut pl1_table[pl1_index];
+        if pl1_entry.is_unused() {
+            return None;
+        }
+
+        Some(pl1_entry)
+    }
     
     pub fn show_address_debug(&self, virtual_addr: VirtualAddress) {
         let pl4_table = get_pl4_table();
@@ -819,7 +871,39 @@ impl PagerInterface for Pager {
         // REVISUT: could it return a PageRanges value?  possibly too complex
         Ok(first_mapped.unwrap())
     }
-    fn free_virtual(&self, _num: usize, _base_addr: VirtualAddress) -> Result<(), ErrCode> { Err(ErrCode::Unimplemented) }
+
+    fn free_virtual(&self, _num: usize, base_addr: VirtualAddress) -> Result<(), ErrCode> { 
+        // TODO: use _num, for now just...
+        assert_eq!(_num, 1);
+
+        // TODO: assert it's page aligned?
+        
+        // clear the page's present bit
+        let page_entry = self.get_page_entry(base_addr).unwrap();
+        page_entry.flags().remove(PageTableFlags::PRESENT);
+
+        // invalidate the page across all CPUs
+        invalidate_page_smp(base_addr);
+
+        // return it to the page stack
+        // TODO: do we need to warn/assert if the virtual address is 4kb aligned, but is actually 
+        // within a 2MB (or 1GB) physical page, which is what we're removing...
+        // TODO: need to explicitly know which page level page_entry came from 
+        //       in order to determine the page size
+        let base_addr_phys = PhysicalAddress(page_entry.addr().as_u64());
+        
+        // TODO: HACK: this should be a free, but it's currently only used for 
+        // the trampoline which is allocated by the bootloader, and therefore already 
+        // accounted for by the page stacks.
+        //self.free_4kb_page(base_addr_phys);
+        self.give_4kb_page(base_addr_phys);
+
+        // now clear the page entirely
+        page_entry.set_unused();
+
+        Ok(())
+    }
+
     fn map_physical_to_virtual(&self, phys_addr: PhysicalAddress, virt_addr: VirtualAddress) -> Result<(), ErrCode> { 
         self.map_physical_to_virtual(
             phys_addr, 

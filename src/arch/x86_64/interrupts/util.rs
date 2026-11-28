@@ -1,4 +1,4 @@
-pub fn cli() {
+pub fn enable() {
     unsafe {
         core::arch::asm!(
             "cli",
@@ -7,7 +7,7 @@ pub fn cli() {
     }
 }
 
-pub fn sti() {
+pub fn disable() {
     unsafe {
         core::arch::asm!(
             "sti",

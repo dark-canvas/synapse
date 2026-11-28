@@ -3,7 +3,7 @@ pub mod timer;
 use x2apic::lapic::{LocalApicBuilder, xapic_base};
 
 use super::smp::CpuState;
-use super::idt::InterruptIndex;
+use super::interrupts::InterruptIndex;
 use super::pager::physical_mirror;
 
 pub fn init() {

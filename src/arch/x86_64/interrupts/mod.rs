@@ -6,4 +6,4 @@ mod util;
 
 pub use idt::init_idt;
 pub use interrupt_index::InterruptIndex;
-pub use util::{sti, cli};
+pub use util::{disable, enable};

@@ -11,6 +11,7 @@ use super::{
     PAGE_SIZE_4KB, PHYSICAL_OFFSET,
 };
 use super::super::X86_PAGER;
+use super::invalidate_page::invalidate_page;
 
 pub fn physical_mirror<T>(addr: T) -> T where T: Into<Address> + From<Address> {
     let addr = addr.into();
@@ -26,16 +27,6 @@ pub fn get_pl4_table() -> &'static mut PageTable {
     unsafe {
         let (pl4_frame, _flags) = Cr3::read();
         &mut *(physical_mirror(pl4_frame.start_address().as_u64()) as *mut PageTable)
-    }
-}
-
-pub fn invalidate_page(addr: VirtualAddress) {
-    unsafe {
-        core::arch::asm!(
-            "invlpg 0({0:r})",
-            in(reg) addr.0,
-            options(nostack, preserves_flags, att_syntax)
-        );
     }
 }
 

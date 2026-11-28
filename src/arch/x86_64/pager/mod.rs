@@ -62,11 +62,16 @@ pub use self::sized_page::SizedPage;
 
 mod util;
 pub use self::util::{
-    get_kernel_cr3, get_pl4_table, get_entry, invalidate_page, is_1gb_aligned,
+    get_kernel_cr3, get_pl4_table, get_entry, is_1gb_aligned,
     is_2mb_aligned, is_4kb_aligned, next_1gb_page, next_2mb_page,
     next_4kb_page, pages_required, physical_mirror, set_mmio,
 };
 use self::util::entry_to_table;
+
+mod invalidate_page;
+pub use self::invalidate_page::{
+    invalidate_page, invalidate_page_handler, invalidate_page_smp, InvalidatePageRequest,
+};
 
 mod run_time_tests;
 pub use self::run_time_tests::run_time_tests;
